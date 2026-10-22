@@ -14,6 +14,7 @@ import { inlineExecution } from '@/lib/queue/execution-mode'
 import { apiLogger } from '@/lib/logger'
 import { recordAudit, toolAuditAction } from '@/lib/audit'
 import { createApproval, requiresApproval } from '@/lib/agents/approval'
+import { planeOfProvider, withActionLedger } from '@/lib/agents/action-ledger'
 import { retrieveContext, renderContext } from '@/lib/rag/retrieve'
 import { loadManifestEntries, renderRepositoryManifest, MANIFEST_MAX_ENTRIES } from '@/lib/knowledge/manifest'
 import { extractCitedDocuments } from '@/lib/knowledge/tools'
@@ -1616,7 +1617,23 @@ async function runAgentExecutionInner(
             continue
           }
 
-          const result = await binding.client.executeTool(binding.serverUrl, binding.toolName, call.input)
+          // The action ledger records this call when it writes (one choke
+          // point for every agent write; see @/lib/agents/action-ledger).
+          const bound = binding
+          const result = await withActionLedger({
+            organizationId,
+            source: { kind: 'agent', agentTaskId: agent.id, runId: execution.id, stepRef: step.id },
+            actorUserId: userId,
+            provider: bound.provider,
+            plane: planeOfProvider(bound.provider, bound.mcpConnectionId),
+            tool: bound.toolName,
+            args: (call.input ?? {}) as Record<string, unknown>,
+            // An MCP tool the server itself reports as changing things is
+            // recorded too, though the runtime does not gate it as a write.
+            isWrite: callIsWrite || bound.reportsWrite === true,
+            credential: bound.credential,
+            mcpConnectionId: bound.mcpConnectionId,
+          }, () => bound.client.executeTool(bound.serverUrl, bound.toolName, call.input))
 
           // Observation, never a gate: a return that carries injection-shaped
           // instructions is recorded so probing is visible, and the fenced

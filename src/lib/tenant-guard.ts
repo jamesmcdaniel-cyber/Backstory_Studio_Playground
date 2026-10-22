@@ -59,6 +59,7 @@ export const ORG_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'DataTable', 'DataTableRow',
   'AuditStreamDestination',
   'FlowSideEffect',
+  'AgentAction',
   'HuddleSegment', 'HuddleNote', 'KnowledgeDocument', 'KnowledgeChunk', 'SharedSkill',
   'KnowledgeCollection', 'KnowledgeDocumentCollection', 'AgentKnowledgeCollection',
   'TemplateProposal', 'StoredFile', 'CatalogueSubmission', 'FlowWebhookReceipt', 'OutboxEvent', 'RoiAnalysis', 'Artifact', 'ArtifactVersion', 'ArtifactAppState', 'ArtifactSharedState', 'ArtifactRenderError',

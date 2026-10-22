@@ -96,6 +96,7 @@ model Organization {
   artifactAppStates              ArtifactAppState[]
   artifactSharedStates           ArtifactSharedState[]
   artifactRenderErrors           ArtifactRenderError[]
+  agentActions                   AgentAction[]
   customSignals                  CustomSignal[]
   pushSubscriptions              PushSubscription[]
   knowledgeDocuments             KnowledgeDocument[]
@@ -2317,6 +2318,68 @@ model FlowSideEffect {
   @@unique([scopeKey, iterationKey, page])
   @@index([organizationId, createdAt])
   @@map("flow_side_effects")
+}
+
+/// The action ledger: one row per side-effecting tool call an agent or flow
+/// made — "what this agent did" — and the handle Undo acts on.
+///
+/// Not the audit log. audit_events is append-only and hashes the arguments by
+/// design, so it can prove a write happened but cannot say what it was, what
+/// it created, or reverse it. FlowSideEffect is an idempotency ledger (replay
+/// protection), keyed by flow scope and swept by retention. This table records
+/// a redacted summary of the call, the provider's own reference to what was
+/// created (message ts, record id, URL), and — for updates whose provider can
+/// be read cheaply first — the prior values Undo restores.
+///
+/// Written only at the choke points where writes execute (the agent tool
+/// loop, flow tool steps, approved writes in decideApproval); see
+/// src/lib/agents/action-ledger.ts. Deliberately not swept by retention, like
+/// the audit log: it is the record a "what did the agent change?" question is
+/// answered from.
+model AgentAction {
+  id             String    @id @default(cuid())
+  organizationId String    @db.Uuid
+  /// 'agent' | 'flow'
+  sourceKind     String
+  agentTaskId    String?
+  flowId         String?
+  /// The AgentExecution id (agent) or FlowRun id (flow).
+  runId          String
+  /// WorkflowStep id (agent) or graph node id (flow).
+  stepRef        String?
+  /// Set when the write ran because a person approved it.
+  approvalId     String?
+  approvedById   String?
+  /// The person the call acted as.
+  actorUserId    String?
+  /// Runtime provider id: 'nango:slack', 'databricks', an MCP connection slug.
+  provider       String
+  /// 'nango' | 'native' | 'mcp' | 'people_ai'
+  plane          String
+  tool           String
+  /// Which connection the call went out on — ids only, never credential material.
+  connectionRef  Json?
+  /// Redacted, size-bounded summary of the arguments.
+  argsSummary    Json      @default("{}")
+  /// The provider's reference to what the call created or touched.
+  resultRef      Json?
+  /// Prior values for an update, captured just before the write.
+  beforeImage    Json?
+  /// 'done' | 'failed' | 'undoing' | 'undone'
+  status         String
+  error          String?
+  undoneAt       DateTime? @db.Timestamptz(6)
+  undoneById     String?
+  undoError      String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, agentTaskId, createdAt])
+  @@index([organizationId, flowId, createdAt])
+  @@index([organizationId, runId])
+  @@map("agent_action_ledger")
 }
 
 /// A workspace repository asset. Uploaded originals are retained through

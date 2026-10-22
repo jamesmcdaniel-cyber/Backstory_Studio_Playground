@@ -23,6 +23,7 @@ import { applySlackChainDepthMetadata, applySlackThreadDefault, prepareToolArgs 
 import { flowToolOutput } from './tool-output'
 import { resolveFlowToolExecutor } from '@/features/agents/tool-planes'
 import { createApproval } from '@/lib/agents/approval'
+import { withActionLedger } from '@/lib/agents/action-ledger'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { notify } from '@/lib/notifications/service'
 import { recordAudit, toolAuditAction } from '@/lib/audit'
@@ -354,7 +355,20 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
           return { waiting: { status: 'waiting_for_approval', question } }
         }
 
-        const { result: output, attempts: toolAttempts, attemptErrors: toolAttemptErrors } = await runWithRetries(
+        // One ledger row per step (not per retry attempt): the action ledger
+        // records a write's outcome — see @/lib/agents/action-ledger.
+        const { result: output, attempts: toolAttempts, attemptErrors: toolAttemptErrors } = await withActionLedger({
+          organizationId: job.organizationId,
+          source: { kind: 'flow', flowId: flow.id, runId: run.id, stepRef: node.id },
+          actorUserId: job.userId,
+          provider: executor.provider,
+          plane,
+          tool: toolName,
+          args,
+          isWrite: executor.isWrite,
+          credential: executor.credential,
+          ...(plane === 'mcp' ? { mcpConnectionId: ref } : {}),
+        }, () => runWithRetries(
           async () => flowToolOutput(await executor.execute(toolName, args)),
           {
             retries,
@@ -365,7 +379,7 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
               ? `Tool ${toolName} timed out after ${Math.round(timeoutMs / 1000)}s — the call may still be finishing in the background.`
               : undefined,
           },
-        )
+        ), { resultOf: (outcome) => outcome.result })
 
         await writeLedger({
           ...ledgerKey,

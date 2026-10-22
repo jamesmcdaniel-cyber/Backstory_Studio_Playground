@@ -61,6 +61,7 @@ export const EXCLUDED: Record<string, string> = {
   ModelEvalResult: 'platform-level model quality measurements (same family as LlmCall); a demo copy would double-count real scores',
   OutboxEvent: 'delivery queue — copying would re-deliver real events',
   FlowSideEffect: 'idempotency ledger for real deliveries; meaningless against canned transports',
+  AgentAction: 'the action ledger records writes made through the REAL workspace\'s connected accounts (message ts, record ids, prior field values); a sandbox has no live connection behind it, so a copied row could only offer an Undo against canned transports or point at somebody else\'s records — demo runs write their own rows',
   FlowWebhookReceipt: 'inbound webhook dedupe ledger tied to real endpoints',
   FlowEditSnapshot: 'editor autosave noise, not demo material',
   ApprovalRequest: 'pending approvals reference live executions; a demo must not look decidable',

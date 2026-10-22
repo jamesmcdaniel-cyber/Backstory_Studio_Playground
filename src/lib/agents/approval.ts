@@ -16,6 +16,7 @@
 
 import { prisma } from '@/lib/prisma'
 import { recordAudit } from '@/lib/audit'
+import { actionSourceForRun, withActionLedger } from './action-ledger'
 import { resolveNangoConnection, type DeliveryCapability } from '@/lib/nango/delivery'
 import { findNangoWriteTool, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { detectPiiCategories } from '@/lib/security/pii-egress'
@@ -279,6 +280,18 @@ export async function decideApproval(input: {
   }
   let executed = false
   let writeResult: unknown = null
+  // Approved writes execute here, outside the agent loop and the flow step —
+  // so this is their action-ledger choke point. Recorded as the person whose
+  // run proposed the write, with the approver alongside.
+  const ledgerBase = {
+    organizationId: input.organizationId,
+    source: await actionSourceForRun(input.organizationId, approval.executionId),
+    actorUserId: payload.userId ?? null,
+    approval: { approvalId: approval.id, approvedById: input.deciderUserId },
+    tool: approval.tool,
+    args: payload.args ?? {},
+    isWrite: true,
+  }
   try {
     if (typeof payload.mcpConnectionId === 'string' && payload.mcpConnectionId) {
       // An MCP tool its owner set to "Needs approval" in Integrations. Run it
@@ -296,7 +309,10 @@ export async function decideApproval(input: {
           toolName: approval.tool,
           approval: 'approved',
         })
-        writeResult = await executor.execute(approval.tool, payload.args ?? {})
+        writeResult = await withActionLedger(
+          { ...ledgerBase, provider: executor.provider, plane: 'mcp', credential: executor.credential, mcpConnectionId: payload.mcpConnectionId },
+          () => executor.execute(approval.tool, payload.args ?? {}),
+        )
         executed = true
       } catch (error) {
         if (!(error instanceof McpToolBlockedError)) throw error
@@ -304,7 +320,10 @@ export async function decideApproval(input: {
     } else if (isWarehouseProvider(payload.provider) && warehouseKindForTool(approval.tool) === payload.provider) {
       // A warehouse write runs as the person who proposed it, through the
       // same host-bound credential lookup as the original call.
-      writeResult = await new WarehouseToolClient(input.organizationId, payload.userId, payload.provider).executeTool('', approval.tool, payload.args)
+      writeResult = await withActionLedger(
+        { ...ledgerBase, provider: payload.provider, plane: 'native', credential: { actsAs: 'workspace' } },
+        () => new WarehouseToolClient(input.organizationId, payload.userId, payload.provider as 'databricks' | 'snowflake').executeTool('', approval.tool, payload.args),
+      )
       executed = true
     } else {
       // Dispatch on the RECORDED (bare) TOOL NAME across the full Nango write
@@ -319,7 +338,15 @@ export async function decideApproval(input: {
         const configKeys = PROVIDER_CONFIG_KEYS[spec.provider] ?? [spec.provider]
         const connection = await resolveNangoConnection(input.organizationId, configKeys, payload.userId)
         if (connection) {
-          writeResult = await spec.run(connection, payload.args)
+          writeResult = await withActionLedger(
+            {
+              ...ledgerBase,
+              provider: payload.provider,
+              plane: 'nango',
+              credential: { actsAs: connection.scope === 'user' ? 'user' : 'workspace', nango: { ...connection } },
+            },
+            () => spec.run(connection, payload.args),
+          )
           executed = true
         }
       }

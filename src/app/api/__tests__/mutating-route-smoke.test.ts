@@ -155,6 +155,7 @@ const cases = (): Case[] => [
   { route: 'repository/collections/[id]', method: 'PATCH', run: async () => (await import('../repository/collections/[id]/route')).PATCH(rq('/api/repository/collections/missing', 'PATCH', { name: 'Renamed' })) },
   { route: 'repository/collections/[id]', method: 'DELETE', run: async () => (await import('../repository/collections/[id]/route')).DELETE(rq('/api/repository/collections/missing', 'DELETE', {})) },
   { route: 'agents/[id]/collections', method: 'PUT', run: async () => (await import('../agents/[id]/collections/route')).PUT(rq('/api/agents/missing/collections', 'PUT', { collectionIds: [] })) },
+  { route: 'agent-actions/[id]/undo', method: 'POST', run: async () => (await import('../agent-actions/[id]/undo/route')).POST(rq('/api/agent-actions/missing/undo', 'POST', {})) },
   { route: 'repository/pull', method: 'POST', run: async () => (await import('../repository/pull/route')).POST(rq('/api/repository/pull', 'POST', { connectionId: 'missing', toolName: 'missing', args: {} })) },
   { route: 'repository/projects', method: 'POST', run: async () => (await import('../repository/projects/route')).POST(rq('/api/repository/projects', 'POST', { name: 'Smoke project', content: 'A repository reference created by the mutation smoke test.', agentId, workspaceScope: false })) },
   { route: 'repository/github/sync', method: 'POST', run: async () => (await import('../repository/github/sync/route')).POST(rq('/api/repository/github/sync', 'POST', { owner: 'missing', repo: 'missing', agentId, workspaceScope: false })) },

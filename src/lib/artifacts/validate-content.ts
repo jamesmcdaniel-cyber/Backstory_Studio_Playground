@@ -64,9 +64,17 @@ export async function validateArtifactPython(content: string): Promise<void> {
     return []
   })
   if (!blocks.length) return
-  const { validatePythonSyntax } = await import('@/features/flows/code-runner')
+  const { validatePythonSyntax, PythonRuntimeUnavailableError } = await import('@/features/flows/code-runner')
   for (const source of blocks) {
     try { await validatePythonSyntax(source) }
-    catch (e) { throw new ArtifactContentError(`Artifact Python failed validation: ${e instanceof Error ? e.message : String(e)}. The current version was not changed.`) }
+    catch (e) {
+      // A runtime that could not start says nothing about the code: report it
+      // as the retryable outage it is, never as a reason to change the page.
+      if (e instanceof PythonRuntimeUnavailableError) {
+        const { ArtifactValidatorUnavailableError } = await import('./preflight')
+        throw new ArtifactValidatorUnavailableError()
+      }
+      throw new ArtifactContentError(`Artifact Python failed validation: ${e instanceof Error ? e.message : String(e)}. The current version was not changed.`)
+    }
   }
 }

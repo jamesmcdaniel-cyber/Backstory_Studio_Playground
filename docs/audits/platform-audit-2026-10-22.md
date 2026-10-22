@@ -55,4 +55,7 @@ Each merge passed typecheck, lint, the migration drift check, and the full CI-mo
 - Also unset: `HEALTH_DETAIL_TOKEN`, `RESEND_API_KEY`, and the VAPID keys.
 - `.env.worker.prod` is a stale pull containing nine `[SENSITIVE]` placeholders. Never import it into Fly.
 
-**Not fixed:** Pyodide runs on the worker's main thread (`code-runner.ts`), and a 5-minute dataset step blocks the heartbeat and the other slots. The agent job lock was sized (8 minutes) to survive it. Moving Python to a worker thread is the real fix.
+**Fixed after the audit:** Python now runs on its own thread (`src/features/flows/code-runner.ts`). A 5-minute dataset step no longer freezes the worker's heartbeat, other jobs or the health check.
+- A run stuck in native code loses its thread 10 s past its deadline; the next run starts a fresh interpreter.
+- A runtime that cannot start is reported as a retryable outage, not a fault in the code.
+- With the event-loop block gone, the BullMQ job lock dropped from 8 to 3 minutes, so a crashed worker's job is recovered within 8 minutes instead of 13.

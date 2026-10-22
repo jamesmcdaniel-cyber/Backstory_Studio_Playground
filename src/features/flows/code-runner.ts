@@ -1,6 +1,5 @@
 import { Worker } from 'node:worker_threads'
 import { getQuickJS, shouldInterruptAfterDeadline } from 'quickjs-emscripten'
-import { loadPyodide, type PyodideAPI } from 'pyodide'
 
 export type CodeLanguage = 'javascript' | 'python'
 export type CodeMode = 'all' | 'each'
@@ -36,7 +35,9 @@ export type CodeRunResult = {
 const MAX_OUTPUT_BYTES = 1_000_000
 const MAX_ITEMS = 1_000
 const DEFAULT_TIMEOUT_MS = 5_000
-const TIMEOUT_MAX_MS = 30_000
+/** The ceiling of a JavaScript code step, which runs on the event loop (QuickJS
+ *  is synchronous) — the longest the main thread is ever blocked on purpose. */
+export const TIMEOUT_MAX_MS = 30_000
 // Dataset runs are pandas over tens of megabytes: a 30 s ceiling would turn a
 // legitimate 24-month cohort analysis into a timeout, and the chart series a
 // dashboard needs do not fit in 1 MB. Both ceilings still exist — they are
@@ -57,45 +58,166 @@ export const FLOW_STEP_MAX_MS = (() => {
 const DATASET_MAX_OUTPUT_BYTES = 5_000_000
 const DATASET_MOUNT = '/datasets'
 const MAX_LOG_ENTRIES = 200
-let pyodidePromise: Promise<PyodideAPI> | undefined
 let pythonQueue: Promise<void> = Promise.resolve()
 
 /** Compile only: artifact source must never execute in the application process. */
 export async function validatePythonSyntax(source: string): Promise<void> {
   if (source.length > 100_000) throw new Error('An inline Python block exceeds 100,000 characters.')
-  const check = pythonQueue.catch(() => undefined).then(async () => {
-    const py = await getPyodide()
-    const scope = py.toPy({ source })
-    try { py.runPython('compile(source, "artifact.py", "exec")\nNone', { globals: scope }) }
-    finally { scope.destroy() }
-  })
-  pythonQueue = check.catch(() => undefined)
-  await check
+  await serializePython(() => callPython({ kind: 'compile', source }))
 }
 // Word 0 is Pyodide's signal slot; word 1 is our durable deadline marker
 // (Pyodide clears the signal word after consuming it).
 const pythonInterruptBuffer = new Int32Array(new SharedArrayBuffer(8))
+/** How long past its deadline a run that ignores the interrupt (stuck in
+ *  native code, e.g. inside a pandas C routine) keeps the thread before the
+ *  thread is terminated and a fresh one started for the next run. */
+const PYTHON_KILL_GRACE_MS = 10_000
 
-function getPyodide(): Promise<PyodideAPI> {
+/**
+ * Pyodide runs on its own thread. A Python step used to run on the event loop,
+ * so a 5-minute dataset step froze everything else in the process — the
+ * worker's heartbeat, other jobs' model streams, the health check. The thread
+ * owns the only interpreter (one per process: it is ~100 MB and not
+ * re-entrant); this side only queues requests and enforces deadlines.
+ *
+ * Plain CommonJS evaluated in the thread, so it needs no bundling: `pyodide`
+ * is resolved from the working directory (the repo, /app on Fly, the traced
+ * function root on Vercel, where next.config includes node_modules/pyodide).
+ */
+const PYTHON_THREAD = String.raw`
+const { parentPort, workerData } = require('node:worker_threads')
+const { createRequire } = require('node:module')
+const { loadPyodide } = createRequire(workerData.base)('pyodide')
+const interrupt = new Int32Array(workerData.interrupt)
+let pyodidePromise
+let pandasPromise
+function runtime() {
   pyodidePromise ??= loadPyodide({
     stdout: () => undefined,
     stderr: () => undefined,
-    // User code cannot import `js`, but an empty JS global is defense in depth.
+    // User code cannot import js, but an empty JS global is defense in depth.
     jsglobals: Object.create(null),
-  }).then((pyodide) => {
-    pyodide.setInterruptBuffer(pythonInterruptBuffer)
-    return pyodide
-  })
+  }).then((pyodide) => { pyodide.setInterruptBuffer(interrupt); return pyodide })
   return pyodidePromise
 }
-
-let pandasPromise: Promise<void> | undefined
-/** pandas + numpy are pyodide packages, not part of the npm bundle: the first
- *  load fetches the wheels into pyodide's package cache (pre-warmed in the
- *  worker image by scripts/warm-pyodide.mjs), later loads come from disk. */
-function loadPandas(pyodide: PyodideAPI): Promise<void> {
-  pandasPromise ??= pyodide.loadPackage(['pandas', 'numpy'], { messageCallback: () => undefined }).then(() => undefined)
+// pandas + numpy are pyodide packages, not part of the npm bundle: the first
+// load fetches the wheels into pyodide's package cache (pre-warmed in the
+// worker image by scripts/warm-pyodide.mjs), later loads come from disk.
+function pandas(pyodide) {
+  pandasPromise ??= pyodide.loadPackage(['pandas', 'numpy'], { messageCallback: () => undefined })
+    .catch((error) => { pandasPromise = undefined; throw error })
   return pandasPromise
+}
+async function handle(message) {
+  const pyodide = await runtime().catch((error) => { error.unavailable = true; throw error })
+  if (message.kind === 'warm') return pandas(pyodide).then(() => undefined)
+  if (message.kind === 'compile') {
+    const scope = pyodide.toPy({ source: message.source })
+    try { pyodide.runPython('compile(source, "artifact.py", "exec")\nNone', { globals: scope }) } finally { scope.destroy() }
+    return undefined
+  }
+  const datasets = message.datasets || []
+  const mounted = []
+  try {
+    if (datasets.length) {
+      await pandas(pyodide)
+      if (!pyodide.FS.analyzePath(workerData.mount).exists) pyodide.FS.mkdir(workerData.mount)
+      datasets.forEach((dataset, index) => {
+        const path = workerData.mount + '/' + index + '-' + dataset.name.replace(/[^\w.-]+/g, '_')
+        pyodide.FS.writeFile(path, dataset.bytes)
+        mounted.push(path)
+      })
+    }
+    const request = Object.assign({}, message.request, {
+      datasets: datasets.map((dataset, index) => ({ name: dataset.name, filename: dataset.filename, path: mounted[index] })),
+    })
+    pyodide.globals.set('_flow_request_json', JSON.stringify(request))
+    return String(pyodide.runPython(workerData.host))
+  } finally {
+    pyodide.globals.delete('_flow_request_json')
+    for (const path of mounted) {
+      try { pyodide.FS.unlink(path) } catch (_) { /* already gone */ }
+    }
+  }
+}
+parentPort.on('message', (message) => {
+  handle(message).then(
+    (raw) => parentPort.postMessage({ id: message.id, ok: true, raw }),
+    (error) => parentPort.postMessage({ id: message.id, ok: false, unavailable: Boolean(error && error.unavailable), error: error && error.message ? error.message : String(error) }),
+  )
+})
+`
+
+/** The Python runtime itself could not start or died — not a verdict on the code it was given. */
+export class PythonRuntimeUnavailableError extends Error {
+  constructor(cause: string) {
+    super(`The Python runtime is unavailable: ${cause}`)
+    this.name = 'PythonRuntimeUnavailableError'
+  }
+}
+
+type PythonMessage =
+  | { kind: 'warm' }
+  | { kind: 'compile'; source: string }
+  | { kind: 'run'; request: Record<string, unknown>; datasets: Array<{ name: string; filename: string; bytes: Uint8Array }> }
+type PythonThread = { worker: Worker; pending: Map<number, { resolve: (raw: string | undefined) => void; reject: (error: Error) => void }> }
+let pythonThread: PythonThread | undefined
+let pythonMessageId = 0
+
+function startPythonThread(): PythonThread {
+  if (pythonThread) return pythonThread
+  const worker = new Worker(PYTHON_THREAD, {
+    eval: true,
+    workerData: { base: `${process.cwd()}/`, interrupt: pythonInterruptBuffer.buffer, host: PYTHON_HOST, mount: DATASET_MOUNT },
+  })
+  // An idle interpreter must not keep a CLI script or test process alive;
+  // callPython re-refs it while a request is outstanding.
+  worker.unref()
+  const thread: PythonThread = { worker, pending: new Map() }
+  const fail = (error: Error) => {
+    if (pythonThread === thread) pythonThread = undefined
+    for (const request of thread.pending.values()) request.reject(new PythonRuntimeUnavailableError(error.message))
+    thread.pending.clear()
+  }
+  worker.on('message', (reply: { id: number; ok: boolean; raw?: string; error?: string; unavailable?: boolean }) => {
+    const request = thread.pending.get(reply.id)
+    if (!request) return
+    thread.pending.delete(reply.id)
+    if (thread.pending.size === 0) worker.unref()
+    if (reply.ok) request.resolve(reply.raw)
+    else request.reject(reply.unavailable ? new PythonRuntimeUnavailableError(reply.error || 'it did not start') : new Error(reply.error || 'Python failed.'))
+  })
+  worker.on('error', (error) => fail(error instanceof Error ? error : new Error(String(error))))
+  worker.on('exit', (code) => fail(new Error(`its thread stopped (exit code ${code})`)))
+  pythonThread = thread
+  return thread
+}
+
+function callPython(message: PythonMessage): Promise<string | undefined> {
+  const thread = startPythonThread()
+  const id = ++pythonMessageId
+  return new Promise((resolve, reject) => {
+    thread.pending.set(id, { resolve, reject })
+    thread.worker.ref()
+    thread.worker.postMessage({ ...message, id })
+  })
+}
+
+/** End the Python thread; the next call starts a fresh interpreter. Pending requests reject with `reason`. */
+function stopPythonThread(reason: Error): void {
+  const thread = pythonThread
+  if (!thread) return
+  pythonThread = undefined
+  for (const request of thread.pending.values()) request.reject(reason)
+  thread.pending.clear()
+  void thread.worker.terminate()
+}
+
+/** One interpreter, one request at a time: Pyodide is stateful and not re-entrant. */
+function serializePython<T>(task: () => Promise<T>): Promise<T> {
+  const run = pythonQueue.catch(() => undefined).then(task)
+  pythonQueue = run.then(() => undefined, () => undefined)
+  return run
 }
 
 // The AST gate blocks imports, filesystem/process primitives, and dunder-based
@@ -322,70 +444,45 @@ ${options.code}
 }
 
 async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: number): Promise<CodeRunResult> {
-  let result: CodeRunResult | undefined
-  let failure: unknown
-  // A Pyodide interpreter is stateful and not re-entrant. Serialize calls and
-  // remove the one temporary global after every execution.
-  const execution = pythonQueue.catch(() => undefined).then(async () => {
-    const pyodide = await getPyodide()
-    const datasets = options.datasets ?? []
-    const mounted: string[] = []
-    if (datasets.length) {
-      await loadPandas(pyodide)
-      if (!pyodide.FS.analyzePath(DATASET_MOUNT).exists) pyodide.FS.mkdir(DATASET_MOUNT)
-      datasets.forEach((dataset, index) => {
-        const path = `${DATASET_MOUNT}/${index}-${dataset.name.replace(/[^\w.-]+/g, '_')}`
-        pyodide.FS.writeFile(path, dataset.bytes)
-        mounted.push(path)
-      })
-    }
+  const datasets = options.datasets ?? []
+  const timedOut = () => new Error(`Code step timed out after ${Math.round(timeoutMs / 1000)}s.`)
+  return serializePython(async () => {
     Atomics.store(pythonInterruptBuffer, 0, 0)
     Atomics.store(pythonInterruptBuffer, 1, 0)
-    // A separate Node thread can flip Pyodide's signal word even while Python
-    // is occupying this thread. Repeating the signal also defeats user code
-    // that attempts to catch KeyboardInterrupt and continue forever.
-    const timer = new Worker(String.raw`
-      const { workerData } = require('node:worker_threads')
-      const interrupt = new Int32Array(workerData.buffer)
-      setTimeout(() => {
-        Atomics.store(interrupt, 1, 1)
-        Atomics.store(interrupt, 0, 2)
-        setInterval(() => Atomics.store(interrupt, 0, 2), 10)
-      }, workerData.timeoutMs)
-    `, {
-      eval: true,
-      workerData: { buffer: pythonInterruptBuffer.buffer, timeoutMs },
-    })
-    pyodide.globals.set('_flow_request_json', JSON.stringify({
-      code: options.code,
-      input: options.input ?? null,
-      context: options.context ?? {},
-      analysis: options.analysis === true,
-      datasets: datasets.map((dataset, index) => ({ name: dataset.name, filename: dataset.filename, path: mounted[index] })),
-    }))
+    // The event loop is free while Python runs, so the deadline is signalled
+    // from here. Repeating the signal defeats user code that catches
+    // KeyboardInterrupt and carries on; a run that never yields to it (stuck
+    // in native code) loses its thread after the grace period.
+    let repeat: ReturnType<typeof setInterval> | undefined
+    const signal = () => {
+      Atomics.store(pythonInterruptBuffer, 1, 1)
+      Atomics.store(pythonInterruptBuffer, 0, 2)
+    }
+    const deadline = setTimeout(() => { signal(); repeat = setInterval(signal, 10) }, timeoutMs)
+    const kill = setTimeout(() => stopPythonThread(timedOut()), timeoutMs + PYTHON_KILL_GRACE_MS)
     try {
-      result = parseResponse(String(pyodide.runPython(PYTHON_HOST)), datasets.length ? DATASET_MAX_OUTPUT_BYTES : MAX_OUTPUT_BYTES)
-      if (Atomics.load(pythonInterruptBuffer, 1) === 1) {
-        throw new Error(`Code step timed out after ${Math.round(timeoutMs / 1000)}s.`)
-      }
+      const raw = await callPython({
+        kind: 'run',
+        request: {
+          code: options.code,
+          input: options.input ?? null,
+          context: options.context ?? {},
+          analysis: options.analysis === true,
+        },
+        datasets: datasets.map((dataset) => ({ name: dataset.name, filename: dataset.filename, bytes: new Uint8Array(dataset.bytes) })),
+      })
+      if (Atomics.load(pythonInterruptBuffer, 1) === 1) throw timedOut()
+      return parseResponse(String(raw), datasets.length ? DATASET_MAX_OUTPUT_BYTES : MAX_OUTPUT_BYTES)
     } catch (error) {
-      failure = Atomics.load(pythonInterruptBuffer, 1) === 1
-        ? new Error(`Code step timed out after ${Math.round(timeoutMs / 1000)}s.`)
-        : error
+      throw Atomics.load(pythonInterruptBuffer, 1) === 1 ? timedOut() : error
     } finally {
-      void timer.terminate()
-      pyodide.globals.delete('_flow_request_json')
-      for (const path of mounted) {
-        try { pyodide.FS.unlink(path) } catch { /* already gone */ }
-      }
+      clearTimeout(deadline)
+      clearTimeout(kill)
+      if (repeat) clearInterval(repeat)
       Atomics.store(pythonInterruptBuffer, 0, 0)
       Atomics.store(pythonInterruptBuffer, 1, 0)
     }
   })
-  pythonQueue = execution
-  await execution
-  if (failure) throw failure
-  return result as CodeRunResult
 }
 
 /** The per-item timeout a run actually gets: clamped to [1 s, ceiling]. */
@@ -447,6 +544,5 @@ export async function runFlowCode(options: CodeRunOptions): Promise<CodeRunResul
  * deploy does not pay for interpreter start-up and the pandas load.
  */
 export async function warmPythonRuntime(): Promise<void> {
-  const pyodide = await getPyodide()
-  await loadPandas(pyodide)
+  await serializePython(() => callPython({ kind: 'warm' }))
 }

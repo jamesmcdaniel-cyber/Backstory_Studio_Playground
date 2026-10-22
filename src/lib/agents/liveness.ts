@@ -4,8 +4,8 @@ import { apiLogger } from '@/lib/logger'
 /**
  * How often a live agent run stamps `lastActiveAt`. The reaper's staleness
  * window (AGENT_STALE_AFTER_MS, src/lib/agents/reap.ts) is several of these,
- * plus the longest the event loop is ever blocked on purpose (a Pyodide code
- * step can hold the main thread for up to 5 minutes), so one late beat never
+ * plus the longest the event loop is ever blocked on purpose (a JavaScript
+ * code step, 30 s; Python runs on its own thread), so one late beat never
  * reads as a dead run.
  */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 60_000

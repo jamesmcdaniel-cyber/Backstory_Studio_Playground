@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { workerConfig } from '../config'
 import { AGENT_STALE_AFTER_MS } from '@/lib/agents/reap'
-import { DATASET_TIMEOUT_MAX_MS } from '@/features/flows/code-runner'
+import { TIMEOUT_MAX_MS } from '@/features/flows/code-runner'
 
 /**
  * Three clocks that must stay in order, each set in a different file.
@@ -19,9 +19,10 @@ test('stall recovery of a dead worker’s job lands before the agent reaper fail
   assert.ok(workerConfig.lockDuration + workerConfig.stalledInterval < AGENT_STALE_AFTER_MS)
 })
 
-test('a Pyodide step blocking the event loop cannot cost a live job its lock', () => {
+test('the longest event-loop block (a JavaScript code step) cannot cost a live job its lock', () => {
   // Renewal fires every lockDuration/4 (lockRenewTime defaults to half the
   // lock, and the renewal timer to half of that), so a block loses the lock
-  // once it outlasts the remaining 3/4.
-  assert.ok(DATASET_TIMEOUT_MAX_MS < (workerConfig.lockDuration * 3) / 4)
+  // once it outlasts the remaining 3/4. Python runs on its own thread and
+  // does not block the loop at all (code-runner-thread.test.ts).
+  assert.ok(TIMEOUT_MAX_MS < (workerConfig.lockDuration * 3) / 4)
 })

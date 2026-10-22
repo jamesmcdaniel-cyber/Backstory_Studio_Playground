@@ -10,17 +10,17 @@ import { Queue, type QueueOptions, type WorkerOptions } from 'bullmq'
  * sat unrecovered for up to 35 minutes, after the stuck-run reaper had
  * already failed it.
  *
- * Eight minutes, because the renewal timer needs the event loop: a Pyodide
- * code step may hold the main thread for up to 5 minutes
- * (DATASET_TIMEOUT_MAX_MS in features/flows/code-runner.ts), and a lock is
- * lost when a block outlasts 3/4 of it — a live job declared stalled and run
- * twice. 8 min tolerates a 6-minute block. Stall recovery then lands within
- * lockDuration + stalledInterval = 13 minutes, inside the agent reaper's
+ * Three minutes. The renewal timer needs the event loop, and a lock is lost
+ * when a block outlasts 3/4 of it — a live job declared stalled and run
+ * twice. Python runs on its own thread, so the longest deliberate block is a
+ * JavaScript code step (TIMEOUT_MAX_MS, 30 s, in features/flows/code-runner.ts);
+ * 3 min tolerates 2m15s. Stall recovery then lands within
+ * lockDuration + stalledInterval = 8 minutes, inside the agent reaper's
  * 15-minute staleness window (AGENT_STALE_AFTER_MS, lib/agents/reap.ts), so
  * a crashed run resumes from its checkpoint instead of being failed first.
  * Changing it requires a worker redeploy.
  */
-export const JOB_LOCK_DURATION_MS = 8 * 60_000
+export const JOB_LOCK_DURATION_MS = 3 * 60_000
 
 export const QUEUE_NAMES = {
   AGENT_EXECUTION: 'agent-execution',

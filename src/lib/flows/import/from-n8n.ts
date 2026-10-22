@@ -11,6 +11,7 @@ import {
   type WarehouseKind,
   type WarehouseStepBinding,
 } from './n8n-warehouse'
+import { databricksJobHttpBinding, databricksToolFor } from './n8n-databricks'
 
 /**
  * Import an n8n workflow JSON (Workflows → Download) as a Backstory flow —
@@ -1003,6 +1004,17 @@ function mapNode(
         )
         return warehouseToolNode(id, label, inlineSqlTokens(warehouse), `Imported from an n8n HTTP call to ${url.split('?')[0]}.`)
       }
+      // n8n has no Jobs operation, so workflows call the Jobs API directly:
+      // run-now / runs/submit run as databricks_run_job, which also polls.
+      const job = databricksJobHttpBinding(method, url, body)
+      if (job) {
+        if (parameters.authentication || node.credentials) {
+          warn(`“${name}”: ${warehouseCredentialNote('databricks', Object.keys(node.credentials ?? {}))}`, { code: 'WAREHOUSE_CREDENTIAL', nodeId: id })
+        }
+        warn(`“${name}”: its HTTP call to the Databricks Jobs API now runs as databricks_run_job, which waits for the run to finish and fails the step if the run fails.`, { code: 'INTEGRATION_BOUND', nodeId: id, severity: 'info' })
+        for (const warning of job.warnings) warn(`“${name}”: ${warning}`, { code: 'WAREHOUSE_REVIEW', nodeId: id })
+        return warehouseToolNode(id, label, job, `Imported from an n8n HTTP call to ${url.split('?')[0]}.`)
+      }
       const bound = httpIntegrationBindingFor(method, url, body, warn, name)
       if (bound) {
         warn(`“${name}”: bound to the platform's ${bound.label} integration (${bound.toolName}) — its n8n credential is replaced by your connected ${bound.label} account.`)
@@ -1968,7 +1980,10 @@ export function n8nToFlow(input: unknown): N8nImportResult {
         const label = kind === 'snowflake' ? 'Snowflake' : 'Databricks'
         integrations.push(label)
         const operation = typeof p.operation === 'string' && p.operation ? ` — ${p.operation}` : ''
-        tools.push({ name: subName, kind: 'integration', description: described || `${label}${operation} (${kind === 'snowflake' ? 'snowflake_sql_query' : 'databricks_sql_query / databricks_run_job'})` })
+        const mappedTool = kind === 'snowflake'
+          ? 'snowflake_sql_query'
+          : databricksToolFor(String(p.resource ?? 'databricksSql'), typeof p.operation === 'string' ? p.operation : '') ?? 'the databricks_* tools'
+        tools.push({ name: subName, kind: 'integration', description: described || `${label}${operation} (${mappedTool})` })
         warn(`Agent “${name}”: its ${label} tool “${subName}” maps to the ${label} connection — ${warehouseCredentialNote(kind, Object.keys(sub.credentials ?? {}))}`, { code: 'WAREHOUSE_CREDENTIAL' })
       } else if (subType.endsWith('.toolCode')) {
         tools.push({ name: subName, kind: 'code', description: described || 'custom code tool' })

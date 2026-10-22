@@ -1,4 +1,5 @@
 import type { AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
+import { DATABRICKS_DEFAULT_OPERATION, databricksApiNodeBinding, locatorValue } from './n8n-databricks'
 
 /**
  * n8n → Backstory for data warehouses and agent HTTP tools.
@@ -10,8 +11,11 @@ import type { AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
  *
  *   n8n-nodes-base.snowflake    executeQuery / insert / update → snowflake_sql_query
  *   n8n-nodes-base.databricks   databricksSql.executeQuery     → databricks_sql_query
- *                               any other resource/operation   → UNMAPPED (kept, flagged)
+ *                               files / genie / modelServing / unityCatalog / vectorSearch
+ *                                 → the workspace-API tools (./n8n-databricks)
+ *                               an operation n8n does not define → UNMAPPED (kept, flagged)
  *   POST …/api/2.0/sql/statements          → databricks_sql_query
+ *   POST …/api/2.x/jobs/run-now | runs/submit → databricks_run_job (./n8n-databricks)
  *   POST <acct>.snowflakecomputing.com/api/v2/statements → snowflake_sql_query
  *
  * SQL is never built by splicing values: generated INSERT/UPDATE statements
@@ -261,22 +265,18 @@ export function snowflakeNodeBinding(
   return { kind: 'snowflake', unmapped: `Snowflake ${operation}`, args: parameters, hint: 'use snowflake_sql_query with the equivalent SQL' }
 }
 
-function locatorValue(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (value && typeof value === 'object') {
-    const inner = (value as { value?: unknown }).value
-    if (typeof inner === 'string') return inner
-  }
-  return ''
-}
-
-/** The n8n Databricks node (v1: resource databricksSql is the only one with an equivalent). */
+/**
+ * The n8n Databricks node (v1). SQL executeQuery is handled here; every other
+ * resource (Files, Genie, Model Serving, Unity Catalog, Vector Search) maps
+ * onto its workspace-API tool in ./n8n-databricks. Only a resource/operation
+ * name n8n's node does not define comes back unmapped.
+ */
 export function databricksNodeBinding(
   parameters: Record<string, unknown>,
-  helpers: { expr: (expression: string) => string; trs: (value: unknown) => string },
+  helpers: { expr: (expression: string) => string; trs: (value: unknown) => string; jsonBase?: string },
 ): WarehouseStepBinding | WarehouseUnmapped {
   const resource = String(parameters.resource ?? 'databricksSql')
-  const operation = String(parameters.operation ?? (resource === 'databricksSql' ? 'executeQuery' : ''))
+  const operation = String(parameters.operation ?? DATABRICKS_DEFAULT_OPERATION[resource] ?? '')
   if (resource === 'databricksSql' && operation === 'executeQuery') {
     const rawWarehouse = locatorValue(parameters.warehouseId)
     // The URL locator mode stores the pasted URL; n8n extracts the id at run time.
@@ -303,18 +303,15 @@ export function databricksNodeBinding(
         : [],
     }
   }
-  const HINTS: Record<string, string> = {
-    files: 'call the Files API (/api/2.0/fs/files/…) from an HTTP step with your Databricks credential',
-    genie: 'call the Genie API (/api/2.0/genie/spaces/…) from an HTTP step with your Databricks credential, or query the tables directly with databricks_sql_query',
-    modelServing: 'call the serving endpoint (/serving-endpoints/<name>/invocations) from an HTTP step with your Databricks credential',
-    unityCatalog: 'use databricks_sql_query (SHOW / DESCRIBE / CREATE … statements) or the Unity Catalog API from an HTTP step',
-    vectorSearch: 'call the Vector Search API (/api/2.0/vector-search/…) from an HTTP step with your Databricks credential',
-  }
+  const api = databricksApiNodeBinding(resource, operation, parameters, helpers)
+  if (api) return api
+  // Not an operation n8n's Databricks node defines (a newer n8n, or a
+  // hand-edited export): kept and flagged rather than guessed at.
   return {
     kind: 'databricks',
     unmapped: `Databricks ${resource}.${operation || '?'}`,
     args: parameters,
-    hint: HINTS[resource] ?? 'use databricks_sql_query or databricks_run_job, or an HTTP step with your Databricks credential',
+    hint: 'pick the matching databricks_* action on the step (files, Genie, serving, Unity Catalog, vector search, SQL or job run), or call the API from an HTTP step with your Databricks credential',
   }
 }
 

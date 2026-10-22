@@ -108,20 +108,20 @@ test('a Databricks executeQuery becomes databricks_sql_query with its warehouse 
   assert.match(result.notes.find((note) => note.code === 'WAREHOUSE_CREDENTIAL')!.message, /Bearer credential holding a Databricks personal access token/)
 })
 
-test('an unmapped Databricks operation is kept, flagged as an error, never a silent passthrough', () => {
+test('a Databricks operation n8n does not define is kept, flagged as an error, never a silent passthrough', () => {
   const result = n8nToFlow({
     name: 'wf',
-    nodes: [manual(), n8nNode('Genie', 'n8n-nodes-base.databricks', { resource: 'genie', operation: 'startConversation', spaceId: 'sp1', initialMessage: '={{ $json.q }}' }, { credentials: { databricksApi: { id: 'd', name: 'D' } } })],
+    nodes: [manual(), n8nNode('Genie', 'n8n-nodes-base.databricks', { resource: 'genie', operation: 'renameSpace', spaceId: 'sp1', title: '={{ $json.q }}' }, { credentials: { databricksApi: { id: 'd', name: 'D' } } })],
     connections: chain('Start', 'Genie'),
   })
   const step = toolNode(result.graph.nodes, 'id-Genie')
   assert.equal(step.connectionId, 'native:databricks')
   assert.equal(step.toolName, '')
   assert.equal(step.parsed.spaceId, 'sp1')
-  assert.equal(step.parsed.initialMessage, '{{trigger.input.q}}')
+  assert.equal(step.parsed.title, '{{trigger.input.q}}')
   const note = result.notes.find((entry) => entry.code === 'UNMAPPED_OPERATION')
   assert.equal(note?.severity, 'error')
-  assert.match(note!.message, /Databricks genie\.startConversation has no Backstory equivalent yet.*will not run.*Genie API/)
+  assert.match(note!.message, /Databricks genie\.renameSpace has no Backstory equivalent yet.*will not run/)
   assert.ok(!result.graph.nodes.some((node) => node.type === 'code'), 'no passthrough stub')
 })
 

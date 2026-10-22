@@ -72,6 +72,9 @@ const pythonInterruptBuffer = new Int32Array(new SharedArrayBuffer(8))
  *  native code, e.g. inside a pandas C routine) keeps the thread before the
  *  thread is terminated and a fresh one started for the next run. */
 const PYTHON_KILL_GRACE_MS = 10_000
+/** Loading the interpreter (and pandas, for datasets) before a run starts.
+ *  Not part of the run's own budget; past it the runtime is reported down. */
+const PYTHON_START_BUDGET_MS = 120_000
 
 /**
  * Pyodide runs on its own thread. A Python step used to run on the event loop,
@@ -132,6 +135,9 @@ async function handle(message) {
       datasets: datasets.map((dataset, index) => ({ name: dataset.name, filename: dataset.filename, path: mounted[index] })),
     })
     pyodide.globals.set('_flow_request_json', JSON.stringify(request))
+    // The interpreter (and pandas) are loaded and the files mounted: the run's
+    // own time starts now, so a cold start never eats the code's budget.
+    parentPort.postMessage({ id: message.id, started: true })
     return String(pyodide.runPython(workerData.host))
   } finally {
     pyodide.globals.delete('_flow_request_json')
@@ -160,7 +166,10 @@ type PythonMessage =
   | { kind: 'warm' }
   | { kind: 'compile'; source: string }
   | { kind: 'run'; request: Record<string, unknown>; datasets: Array<{ name: string; filename: string; bytes: Uint8Array }> }
-type PythonThread = { worker: Worker; pending: Map<number, { resolve: (raw: string | undefined) => void; reject: (error: Error) => void }> }
+type PythonThread = {
+  worker: Worker
+  pending: Map<number, { resolve: (raw: string | undefined) => void; reject: (error: Error) => void; onStarted?: () => void }>
+}
 let pythonThread: PythonThread | undefined
 let pythonMessageId = 0
 
@@ -179,9 +188,10 @@ function startPythonThread(): PythonThread {
     for (const request of thread.pending.values()) request.reject(new PythonRuntimeUnavailableError(error.message))
     thread.pending.clear()
   }
-  worker.on('message', (reply: { id: number; ok: boolean; raw?: string; error?: string; unavailable?: boolean }) => {
+  worker.on('message', (reply: { id: number; ok?: boolean; started?: boolean; raw?: string; error?: string; unavailable?: boolean }) => {
     const request = thread.pending.get(reply.id)
     if (!request) return
+    if (reply.started) { request.onStarted?.(); return }
     thread.pending.delete(reply.id)
     if (thread.pending.size === 0) worker.unref()
     if (reply.ok) request.resolve(reply.raw)
@@ -193,11 +203,11 @@ function startPythonThread(): PythonThread {
   return thread
 }
 
-function callPython(message: PythonMessage): Promise<string | undefined> {
+function callPython(message: PythonMessage, onStarted?: () => void): Promise<string | undefined> {
   const thread = startPythonThread()
   const id = ++pythonMessageId
   return new Promise((resolve, reject) => {
-    thread.pending.set(id, { resolve, reject })
+    thread.pending.set(id, { resolve, reject, onStarted })
     thread.worker.ref()
     thread.worker.postMessage({ ...message, id })
   })
@@ -458,8 +468,19 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
       Atomics.store(pythonInterruptBuffer, 1, 1)
       Atomics.store(pythonInterruptBuffer, 0, 2)
     }
-    const deadline = setTimeout(() => { signal(); repeat = setInterval(signal, 10) }, timeoutMs)
-    const kill = setTimeout(() => stopPythonThread(timedOut()), timeoutMs + PYTHON_KILL_GRACE_MS)
+    // Armed when the thread reports the code itself has started, not at the
+    // call: a cold interpreter or pandas load is not the code's time.
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    let kill: ReturnType<typeof setTimeout> | undefined
+    const startBudget = setTimeout(
+      () => stopPythonThread(new PythonRuntimeUnavailableError(`it did not start within ${PYTHON_START_BUDGET_MS / 1000}s`)),
+      PYTHON_START_BUDGET_MS,
+    )
+    const started = () => {
+      clearTimeout(startBudget)
+      deadline = setTimeout(() => { signal(); repeat = setInterval(signal, 10) }, timeoutMs)
+      kill = setTimeout(() => stopPythonThread(timedOut()), timeoutMs + PYTHON_KILL_GRACE_MS)
+    }
     try {
       const raw = await callPython({
         kind: 'run',
@@ -470,14 +491,15 @@ async function runPython(options: Omit<CodeRunOptions, 'mode'>, timeoutMs: numbe
           analysis: options.analysis === true,
         },
         datasets: datasets.map((dataset) => ({ name: dataset.name, filename: dataset.filename, bytes: new Uint8Array(dataset.bytes) })),
-      })
+      }, started)
       if (Atomics.load(pythonInterruptBuffer, 1) === 1) throw timedOut()
       return parseResponse(String(raw), datasets.length ? DATASET_MAX_OUTPUT_BYTES : MAX_OUTPUT_BYTES)
     } catch (error) {
       throw Atomics.load(pythonInterruptBuffer, 1) === 1 ? timedOut() : error
     } finally {
-      clearTimeout(deadline)
-      clearTimeout(kill)
+      clearTimeout(startBudget)
+      if (deadline) clearTimeout(deadline)
+      if (kill) clearTimeout(kill)
       if (repeat) clearInterval(repeat)
       Atomics.store(pythonInterruptBuffer, 0, 0)
       Atomics.store(pythonInterruptBuffer, 1, 0)

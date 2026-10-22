@@ -27,6 +27,12 @@ test('an HTML answer is detected whether fenced or bare; prose is not', () => {
   assert.equal(htmlDocumentOf('```html\n' + doc + '\n```'), doc)
   assert.equal(htmlDocumentOf('Use <br> to break lines, then run it.'), null)
   assert.equal(htmlDocumentOf('## Summary\n\nWin rate rose.'), null)
+  // The document a short lead-in introduces is the document, without the lead-in.
+  assert.equal(htmlDocumentOf('Here is the review:\n\n```html\n' + doc + '\n```'), doc)
+  assert.equal(htmlDocumentOf('Here is the review:\n' + doc), doc)
+  // Markdown with an embedded snippet, or prose with an inline tag, is not a document.
+  assert.equal(htmlDocumentOf('## Embed\n\nUse this:\n\n```html\n<div><p>x</p></div>\n```\n\nThat is all the markup the widget needs; the rest of the page is unchanged.'), null)
+  assert.equal(htmlDocumentOf('Put a <p>paragraph</p> around each line.'), null)
   assert.equal(looksLikeHtml('<div class="report"><p>hi</p></div>'), true)
 })
 

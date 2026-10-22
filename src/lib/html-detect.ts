@@ -28,10 +28,46 @@ export function unwrapHtmlFence(value: string): string {
   return inner && looksLikeHtml(inner) ? inner : value
 }
 
-/** The HTML document an agent answer holds, or null when the answer is prose. */
+/**
+ * Whether text IS an HTML document, from its first character to its last:
+ * it opens with a doctype, <html>, <head> or <body> (after any comments), or
+ * it opens with a structural tag and ends with a closing one. Prose or
+ * Markdown that merely contains markup — an inline <p>, an embedded snippet —
+ * is not; that is what `looksLikeHtml` (for rendering text already known to
+ * be a page) is loose about.
+ */
+function isHtmlDocument(text: string): boolean {
+  const stripped = text.replace(/^\uFEFF/, '').trimStart()
+  // A comment still open at the end of the sample is a long banner on an HTML file.
+  if (stripped.startsWith('<!--') && !/^(?:\s*<!--[\s\S]*?-->)+/.test(stripped)) return true
+  const body = stripped.replace(/^(?:\s*<!--[\s\S]*?-->)+/, '').trim()
+  if (/^<(?:!doctype|html|head|body)\b/i.test(body)) return true
+  return LEADING_TAG_PATTERN.test(body) && /(?:<\/[a-z][\w-]*\s*>|-->)$/i.test(body)
+}
+
+// A short lead-in ("Here is the report:") and a short sign-off are allowed
+// around the one fenced block; a longer explanation makes it an answer that
+// shows code, not a deliverable.
+const SOLE_FENCE_PATTERN = /^(?:[^\n`]{0,240}\n+)?[ \t]*```([a-z]*)[^\n]*\n([\s\S]*?)\n[ \t]*```[ \t]*(?:\n+[^`]{0,240})?$/i
+
+/** The one fenced block that makes up essentially the whole answer, with its language; null for anything else. */
+export function soleFencedBlockOf(text: string): { lang: string; inner: string } | null {
+  const match = SOLE_FENCE_PATTERN.exec(text.trim())
+  return match ? { lang: match[1].toLowerCase(), inner: match[2].trim() } : null
+}
+
+/**
+ * The HTML document an agent answer IS, or null when the answer is prose or
+ * Markdown (whatever markup it shows): the answer itself, the one fenced
+ * html block it consists of, or a document a short lead-in introduces.
+ */
 export function htmlDocumentOf(text: string): string | null {
-  const content = unwrapHtmlFence(text).trim()
-  return looksLikeHtml(content) ? content : null
+  const content = text.trim()
+  if (isHtmlDocument(content)) return content
+  const fenced = soleFencedBlockOf(content)
+  if (fenced) return /^(?:html?|xhtml|)$/.test(fenced.lang) && isHtmlDocument(fenced.inner) ? fenced.inner : null
+  const lead = /^[^\n<`]{1,240}\n+\s*(?=<!doctype\b|<html\b)/i.exec(content)
+  return lead ? content.slice(lead[0].length).trim() : null
 }
 
 /** A title for a report: its <title>, else its first heading, else null. */
@@ -46,7 +82,7 @@ const HEADING = /^#{1,3} \S/m
 /** Enough headed Markdown to be a document someone will keep, not a reply. */
 export function markdownDocumentOf(text: string): string | null {
   const content = text.trim()
-  if (looksLikeHtml(content)) return null
+  if (htmlDocumentOf(content)) return null
   const headings = (content.match(/^#{1,3} \S/gm) ?? []).length
   if ((content.length >= 1_500 && headings >= 2) || (content.length >= 3_000 && HEADING.test(content))) return content
   return null

@@ -4,7 +4,7 @@ import { prisma, tenantTransaction } from '@/lib/prisma'
 import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
 import { htmlDocumentOf, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdownTitleOf, unwrapHtmlFence } from '@/lib/html-detect'
-import { reactArtifactDocument, reactComponentOf } from './runtime'
+import { deliverableComponentOf, reactArtifactDocument, reactComponentOf } from './runtime'
 import { readAssistantConfig } from './assistant-settings'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import { maxArtifactCharsFor, validateArtifactContent, validateArtifactPython } from './validate-content'
@@ -64,7 +64,7 @@ export function htmlHasScript(content: string): boolean {
 
 /** JSX contains paired HTML tags; recognize the module before generic HTML. */
 export function executionArtifactDocument(summary: string): string | null {
-  const component = reactComponentOf(summary)
+  const component = deliverableComponentOf(summary)
   return component ? reactArtifactDocument(component) : htmlDocumentOf(summary)
 }
 

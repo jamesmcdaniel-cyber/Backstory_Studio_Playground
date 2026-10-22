@@ -1,4 +1,5 @@
 import { transform } from 'sucrase'
+import { soleFencedBlockOf } from '@/lib/html-detect'
 
 /**
  * The artifact runtime: what makes an agent's page work like a Claude
@@ -358,6 +359,18 @@ export function reactComponentOf(text: string): string | null {
   if (!/<[A-Za-z][\w.]*[\s>/]/.test(source)) return null
   if (!/^(?:import\b|export\b|const\b|function\b|\/\/|\/\*|'use client'|"use client"|type\b|interface\b)/.test(source)) return null
   return source
+}
+
+/**
+ * The React component an agent answer IS: the module itself, or the one
+ * fenced block it consists of (a short lead-in allowed). A component shown
+ * inside a longer explanation is an answer about code, not a deliverable.
+ */
+export function deliverableComponentOf(text: string): string | null {
+  const direct = reactComponentOf(text)
+  if (direct) return direct
+  const fenced = soleFencedBlockOf(text)
+  return fenced && /^(?:jsx|tsx|javascript|js|typescript|ts|react|)$/.test(fenced.lang) ? reactComponentOf(fenced.inner) : null
 }
 
 /** The heading a component renders first — its name as an artifact. */

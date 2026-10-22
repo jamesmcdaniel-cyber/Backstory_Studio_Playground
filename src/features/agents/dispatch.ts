@@ -2,6 +2,7 @@ import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import type { AgentExecutionJob } from './execute-agent'
 import { injectTraceContext } from '@/lib/observability/otel'
+import { assertQueueConsumerAlive } from '@/lib/queue/heartbeat'
 
 /**
  * Hand an agent run to the worker (or run it here in inline mode).
@@ -31,7 +32,13 @@ export async function dispatchAgentExecution(
 
   if (!workersEnabled) throw new Error('Agent worker is disabled')
 
-  const queue = createQueue(options.queue ?? QUEUE_NAMES.AGENT_EXECUTION)
+  const queueName = options.queue ?? QUEUE_NAMES.AGENT_EXECUTION
+  // No live consumer means the job would sit in Redis and the caller's row
+  // `pending` until the reaper. Every caller already terminalizes its row when
+  // this throws (ROI, artifact assistant, Slack starts) or gives the occurrence
+  // back (the schedule tick), so failing here is what makes the outage show.
+  await assertQueueConsumerAlive(Date.now(), queueName)
+  const queue = createQueue(queueName)
   // jobId = executionId makes the enqueue idempotent: a retried cron tick that
   // re-dispatches the same execution row is a no-op rather than a double run.
   await queue.add('execute-agent', injectTraceContext(job), { jobId: job.executionId })

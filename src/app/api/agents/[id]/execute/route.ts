@@ -8,6 +8,7 @@ import { configurableAgentScope as agentVisibilityScope } from '@/lib/server/vis
 import { rateLimit } from '@/lib/ratelimit'
 import { checkDailyRunAllowance, limitMessage } from '@/lib/usage/free-tier-limits'
 import { injectTraceContext } from '@/lib/observability/otel'
+import { assertQueueConsumerAlive } from '@/lib/queue/heartbeat'
 
 export const runtime = 'nodejs'
 export const maxDuration = 1800
@@ -43,6 +44,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // Skills are composed into the system prompt inside runAgentExecution, shared
   // by every trigger — pass the raw objective so they aren't applied twice.
   const runInput = input?.trim() || agent.objective
+
+  // Queue mode with no live consumer: refuse BEFORE the row exists. Enqueued
+  // blindly, the job sat in Redis with the run `pending` until the 30-minute
+  // reaper failed it — the same strand flow dispatch and agent chat already
+  // refuse. Thrown as ExecutionBackendOfflineError, which withAuthenticatedApi
+  // answers 503 EXECUTION_BACKEND_OFFLINE. A disabled worker (BULLMQ_DISABLE)
+  // has no Redis to probe and keeps its own WORKER_DISABLED answer below.
+  if (!inlineExecution && workersEnabled) await assertQueueConsumerAlive(Date.now(), QUEUE_NAMES.AGENT_EXECUTION)
 
   const execution = await prisma.agentExecution.create({
     data: {

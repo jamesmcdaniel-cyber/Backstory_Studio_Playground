@@ -10,6 +10,8 @@ import { rateLimit } from '@/lib/ratelimit'
 import { recordTokenRejection } from '@/lib/security/events'
 import { readRequestJsonLimited, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
 import { injectTraceContext } from '@/lib/observability/otel'
+import { assertQueueConsumerAlive } from '@/lib/queue/heartbeat'
+import { EXECUTION_BACKEND_OFFLINE_CODE, EXECUTION_BACKEND_OFFLINE_MESSAGE, isExecutionBackendOffline } from '@/lib/queue/backend-offline'
 
 export const runtime = 'nodejs'
 export const maxDuration = 1800
@@ -87,6 +89,21 @@ export async function POST(request: NextRequest) {
     // @@unique([organizationId, idempotencyKey]) constraint.
     const idempotencyKey = request.headers.get('x-idempotency-key')?.trim() || undefined
 
+    // Same refusal as the execute route, before the row exists: with no live
+    // consumer the job would strand `pending` until the reaper while the caller
+    // was told the run had started.
+    if (!inlineExecution && workersEnabled) {
+      try {
+        await assertQueueConsumerAlive(Date.now(), QUEUE_NAMES.AGENT_EXECUTION)
+      } catch (error) {
+        if (!isExecutionBackendOffline(error)) throw error
+        return NextResponse.json(
+          { success: false, error: EXECUTION_BACKEND_OFFLINE_MESSAGE, code: EXECUTION_BACKEND_OFFLINE_CODE },
+          { status: 503 },
+        )
+      }
+    }
+
     let execution
     try {
       execution = await prisma.agentExecution.create({
@@ -141,14 +158,25 @@ export async function POST(request: NextRequest) {
       if (!workersEnabled) {
         return NextResponse.json({ success: false, error: 'Agent worker is disabled' }, { status: 503 })
       }
-      const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
-      await queue.add('execute-agent', injectTraceContext({
-        executionId: execution.id,
-        agentId: agent.id,
-        organizationId: agent.organizationId,
-        userId: user.id,
-        input,
-      }), { jobId: execution.id })
+      try {
+        const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
+        await queue.add('execute-agent', injectTraceContext({
+          executionId: execution.id,
+          agentId: agent.id,
+          organizationId: agent.organizationId,
+          userId: user.id,
+          input,
+        }), { jobId: execution.id })
+      } catch (error) {
+        // The row exists and nothing will ever run it: fail it now rather than
+        // leave it `pending` for the reaper, as the execute route does.
+        // systemPrisma: session-less trigger path; execution id was minted org-scoped above.
+        await systemPrisma.agentExecution.update({
+          where: { id: execution.id },
+          data: { status: 'failed', error: (error instanceof Error ? error.message : String(error)).slice(0, 300), completedAt: new Date() },
+        })
+        return NextResponse.json({ success: false, error: 'Unable to queue agent execution', code: 'QUEUE_UNAVAILABLE' }, { status: 503 })
+      }
 
       return NextResponse.json({ success: true, executionId: execution.id, status: 'pending' })
     }

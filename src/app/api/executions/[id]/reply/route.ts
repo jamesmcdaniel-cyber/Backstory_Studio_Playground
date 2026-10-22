@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
+import { isExecutionBackendOffline } from '@/lib/queue/backend-offline'
 import { runAgentExecution } from '@/features/agents/execute-agent'
 import { dispatchDetachedFlowExecution } from '@/features/flows/execute-flow'
 import { inlineExecution } from '@/lib/queue/execution-mode'
@@ -98,7 +99,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       })
       return { success: true, executionId: execution.id, flowRunId: run.id, status: 'resuming' }
     } catch (error) {
-      if (error instanceof ApiError) throw error
+      // A dead worker fleet is an outage (503 EXECUTION_BACKEND_OFFLINE via
+      // withAuthenticatedApi), not a resume that broke.
+      if (error instanceof ApiError || isExecutionBackendOffline(error)) throw error
       throw new ApiError('Flow resume failed', 500, 'RUN_FAILED')
     }
   }

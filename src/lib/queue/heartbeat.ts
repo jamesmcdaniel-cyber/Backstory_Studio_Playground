@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq'
 import { getRedisConnection, QUEUE_NAMES } from '@/lib/queue/config'
+import { ExecutionBackendOfflineError } from './backend-offline'
 
 /**
  * Worker liveness heartbeat, written to the SAME Redis the producer enqueues
@@ -24,8 +25,7 @@ export const WORKER_HEARTBEAT_INTERVAL_MS = 60_000
  */
 export const WORKER_HEARTBEAT_STALE_MS = 3 * 60_000
 
-export const EXECUTION_BACKEND_OFFLINE_MESSAGE =
-  'Execution backend is offline — no worker has reported a heartbeat recently, so the run was not started. Check the worker fleet (fly logs) and /api/health.'
+export { EXECUTION_BACKEND_OFFLINE_CODE, EXECUTION_BACKEND_OFFLINE_MESSAGE } from './backend-offline'
 
 /** Pure staleness verdict over the raw Redis value. */
 export function isHeartbeatFresh(
@@ -186,7 +186,9 @@ export async function resolveConsumerAlive(
 }
 
 /**
- * Producer-side gate: throw EXECUTION_BACKEND_OFFLINE_MESSAGE unless the
+ * Producer-side gate: throw ExecutionBackendOfflineError (whose message is
+ * EXECUTION_BACKEND_OFFLINE_MESSAGE; withAuthenticatedApi answers it 503
+ * EXECUTION_BACKEND_OFFLINE) unless the
  * consumer side of `queue` is provably alive (see resolveConsumerAlive).
  * Defaults to the flow queue, its original and most frequent caller.
  */
@@ -201,5 +203,5 @@ export async function assertQueueConsumerAlive(now: number = Date.now(), queue: 
     },
     now,
   )
-  if (!alive) throw new Error(EXECUTION_BACKEND_OFFLINE_MESSAGE)
+  if (!alive) throw new ExecutionBackendOfflineError()
 }

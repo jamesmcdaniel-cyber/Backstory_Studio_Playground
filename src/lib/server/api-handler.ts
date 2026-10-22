@@ -11,6 +11,7 @@ import { ambientOrganization } from '@/lib/tenant-database-context'
 import { recordPresence } from '@/lib/server/presence'
 import { CircuitOpenError } from '@/lib/resilience/circuit-breaker'
 import { FileRejectedError } from '@/lib/files/security'
+import { EXECUTION_BACKEND_OFFLINE_CODE, isExecutionBackendOffline } from '@/lib/queue/backend-offline'
 import { boundedNextRequest, RequestBodyError, requestBodyErrorResponse } from '@/lib/server/request-body'
 
 /**
@@ -282,6 +283,19 @@ export function withAuthenticatedApi(
             status: 503,
             headers: { 'Retry-After': String(Math.max(1, Math.ceil(error.retryAfterMs / 1000))) },
           },
+        )
+      }
+
+      // No worker is consuming the queue a run would go to (the heartbeat gate
+      // in lib/queue/heartbeat.ts). The run was refused before it was handed
+      // off, so this is an outage to report, not a fault in this request: 503
+      // with one code, whichever run route the person started from — a 500
+      // here read as "something broke" and hid the one fact that matters.
+      if (isExecutionBackendOffline(error)) {
+        apiLogger.warn('Run refused: execution backend offline', { path: request.nextUrl.pathname })
+        return NextResponse.json(
+          { success: false, error: (error as Error).message, code: EXECUTION_BACKEND_OFFLINE_CODE },
+          { status: 503 },
         )
       }
 

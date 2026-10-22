@@ -296,6 +296,21 @@ test('columnarToRecords maps generic columns/rows and passes record lists throug
   assert.deepEqual(runDataOp('columnarToRecords', { input: already }), { output: already })
 })
 
+test('columnarToRecords maps the Databricks statement shape, and passes warehouse-tool records through', () => {
+  const databricks = {
+    statement_id: 's1',
+    status: { state: 'SUCCEEDED' },
+    manifest: { schema: { column_count: 2, columns: [{ name: 'account_id', position: 0 }, { name: 'arr', position: 1 }] } },
+    result: { chunk_index: 0, row_count: 2, data_array: [['001', '1200.5'], ['002', null]] },
+  }
+  assert.deepEqual(runDataOp('columnarToRecords', { input: databricks }), { output: [{ account_id: '001', arr: '1200.5' }, { account_id: '002', arr: null }] })
+  // A result-less statement (DDL/DML) answers a manifest and no rows.
+  assert.deepEqual(runDataOp('columnarToRecords', { input: { statement_id: 's2', manifest: { schema: { columns: [] } }, result: {} } }), { output: [] })
+  // databricks_sql_query / snowflake_sql_query already answer records under `rows`.
+  const tool = { columns: ['ID'], rows: [{ ID: 1 }, { ID: 2 }], rowCount: 2, truncated: false }
+  assert.deepEqual(runDataOp('columnarToRecords', { input: tool }), { output: [{ ID: 1 }, { ID: 2 }] })
+})
+
 test('columnarToRecords rejects shapes without columns and rows in plain english', () => {
   const res = runDataOp('columnarToRecords', { input: { foo: 'bar' } })
   assert.ok('error' in res && /column names and rows/.test(res.error))

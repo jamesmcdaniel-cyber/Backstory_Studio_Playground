@@ -277,10 +277,12 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
 
   if (op === 'columnarToRecords') {
     // SQL-over-HTTP APIs return columns-and-rows, not records — Snowflake's
-    // SQL API v2 ({resultSetMetaData.rowType[].name, data: [[...]]}) and the
-    // generic {columns, rows} shape. Field access ({{item.NAME}}) needs
-    // records, so zip each row against the column names. A list that is
-    // already records passes through untouched.
+    // SQL API v2 ({resultSetMetaData.rowType[].name, data: [[...]]}),
+    // Databricks' Statement Execution API ({manifest.schema.columns[].name,
+    // result.data_array: [[...]]}) and the generic {columns, rows} shape.
+    // Field access ({{item.NAME}}) needs records, so zip each row against the
+    // column names. A list that is already records passes through untouched,
+    // as does a {columns, rows} whose rows are already records.
     const structured = asStructured(config.input)
     if (Array.isArray(structured) && structured.every((item) => item && typeof item === 'object' && !Array.isArray(item))) {
       return { output: structured }
@@ -288,12 +290,27 @@ export function runDataOp(op: DataOp, config: DataOpConfig): DataOpResult {
     if (structured && typeof structured === 'object' && !Array.isArray(structured)) {
       const source = structured as Record<string, unknown>
       const meta = source.resultSetMetaData as { rowType?: { name?: unknown }[] } | undefined
+      const manifest = source.manifest as { schema?: { columns?: { name?: unknown }[] } } | undefined
+      const result = source.result as { data_array?: unknown } | undefined
       const names = Array.isArray(meta?.rowType)
         ? meta.rowType.map((column) => String(column?.name ?? ''))
-        : Array.isArray(source.columns)
-          ? (source.columns as unknown[]).map(String)
-          : null
-      const rows = Array.isArray(source.data) ? source.data : Array.isArray(source.rows) ? source.rows : null
+        : Array.isArray(manifest?.schema?.columns)
+          ? manifest.schema.columns.map((column) => String(column?.name ?? ''))
+          : Array.isArray(source.columns)
+            ? (source.columns as unknown[]).map((column) => (column && typeof column === 'object' && 'name' in column ? String((column as { name?: unknown }).name ?? '') : String(column)))
+            : null
+      const rows = Array.isArray(source.data)
+        ? source.data
+        : Array.isArray(result?.data_array)
+          ? (result.data_array as unknown[])
+          : Array.isArray(source.rows)
+            ? source.rows
+            : null
+      if (rows && (rows as unknown[]).every((row) => row && typeof row === 'object' && !Array.isArray(row))) {
+        return { output: rows }
+      }
+      // Databricks answers a result-less statement with a manifest and no rows.
+      if (names && !rows && manifest) return { output: [] }
       if (names && rows) {
         return {
           output: (rows as unknown[]).map((row) =>

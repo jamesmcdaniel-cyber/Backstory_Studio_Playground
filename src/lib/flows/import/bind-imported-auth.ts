@@ -119,7 +119,9 @@ export function bindAgentEndpointAuth<T extends { name: string; url: string; cre
   const notes: string[] = []
   const bound = endpoints.map((endpoint) => {
     if (endpoint.credentialId || endpoint.connectionId) return endpoint
-    const host = hostnameOf(endpoint.url)
+    // Endpoint URLs carry {{param}} placeholders in their PATH; only the host
+    // must be literal to bind.
+    const host = /^https?:\/\/([^/?#{}]+)(?:[/?#]|$)/i.exec(endpoint.url)?.[1]?.toLowerCase().replace(/:\d+$/, '') ?? null
     const credential = host ? httpCredentials.find((row) => row.allowedHost.toLowerCase() === host) : undefined
     if (!credential) return endpoint
     notes.push(`HTTP tool “${endpoint.name}”: authenticated with your “${credential.name}” credential (${credential.allowedHost}).`)

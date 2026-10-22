@@ -258,7 +258,7 @@ test('the import route\'s binders attach agent endpoint auth by host and retire 
     { id: 'cb', name: 'Clearbit', allowedHost: 'api.clearbit.example.com' },
     { id: 'sf', name: 'Snowflake prod', allowedHost: 'acme-prod.snowflakecomputing.com' },
   ]
-  const endpoints = bindAgentEndpointAuth<{ name: string; url: string; credentialId?: string }>([{ name: 'Lookup', url: 'https://api.clearbit.example.com/v2/x' }, { name: 'Other', url: 'https://elsewhere.example.com/' }], credentials)
+  const endpoints = bindAgentEndpointAuth<{ name: string; url: string; credentialId?: string }>([{ name: 'Lookup', url: 'https://api.clearbit.example.com/v2/companies/{{domain}}' }, { name: 'Other', url: 'https://elsewhere.example.com/' }], credentials)
   assert.equal(endpoints.endpoints[0].credentialId, 'cb')
   assert.equal('credentialId' in endpoints.endpoints[1], false)
   const notes = [

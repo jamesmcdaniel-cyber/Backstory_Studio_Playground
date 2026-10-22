@@ -621,7 +621,13 @@ export function AssistantPanel({
                     <Play className="h-3 w-3" />
                     Agent run
                     {message.run.status === 'failed' && <span className="text-red-600">— failed</span>}
-                    {message.run.status === 'pending' && <span className="text-gray-500">— running</span>}
+                    {/* The thread reads the run's live status, so a queued run moves through
+                        pending → running → its outcome across reloads. */}
+                    {(message.run.status === 'pending' || message.run.status === 'running' || message.run.status === 'cancelling') && (
+                      <span className="text-gray-500">— running</span>
+                    )}
+                    {message.run.status === 'blocked' && <span className="text-amber-600">— blocked</span>}
+                    {message.run.status === 'cancelled' && <span className="text-gray-500">— cancelled</span>}
                     {(message.run.status === 'waiting_for_input' || message.run.status === 'waiting_for_approval') && (
                       <span className="text-amber-600">— waiting</span>
                     )}

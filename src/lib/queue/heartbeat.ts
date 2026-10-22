@@ -133,15 +133,19 @@ export function consumerAliveVerdict(heartbeatFresh: boolean, registeredWorkers:
   return registeredWorkers !== null && registeredWorkers > 0
 }
 
-// Lazy singleton: a Queue handle holds a Redis connection, and this is only
-// needed on the fallback path (no fresh heartbeat).
-let flowQueueHandle: Queue | null = null
+// Lazy singletons, one per probed queue: a Queue handle holds a Redis
+// connection, and this is only needed on the fallback path (no fresh heartbeat).
+const queueHandles = new Map<string, Queue>()
 
-async function registeredFlowWorkers(timeoutMs = 5_000): Promise<number | null> {
+async function registeredWorkers(queue: string, timeoutMs = 5_000): Promise<number | null> {
   try {
-    flowQueueHandle ??= new Queue(QUEUE_NAMES.FLOW_EXECUTION, { connection: getRedisConnection() })
+    let handle = queueHandles.get(queue)
+    if (!handle) {
+      handle = new Queue(queue, { connection: getRedisConnection() })
+      queueHandles.set(queue, handle)
+    }
     const workers = await Promise.race([
-      flowQueueHandle.getWorkers(),
+      handle.getWorkers(),
       new Promise<never>((_resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('worker probe timed out')), timeoutMs)
         if (typeof timer === 'object') timer.unref?.()
@@ -183,16 +187,17 @@ export async function resolveConsumerAlive(
 
 /**
  * Producer-side gate: throw EXECUTION_BACKEND_OFFLINE_MESSAGE unless the
- * consumer side is provably alive (see resolveConsumerAlive).
+ * consumer side of `queue` is provably alive (see resolveConsumerAlive).
+ * Defaults to the flow queue, its original and most frequent caller.
  */
-export async function assertQueueConsumerAlive(now: number = Date.now()): Promise<void> {
+export async function assertQueueConsumerAlive(now: number = Date.now(), queue: string = QUEUE_NAMES.FLOW_EXECUTION): Promise<void> {
   const alive = await resolveConsumerAlive(
     {
       // Per-queue proof first. The global fallback preserves availability
       // during rolling deploys from worker images predating queue heartbeats.
       readHeartbeat: async () =>
-        (await readHeartbeat(3_000, workerQueueHeartbeatKey(QUEUE_NAMES.FLOW_EXECUTION))) ?? readHeartbeat(),
-      registeredWorkers: () => registeredFlowWorkers(),
+        (await readHeartbeat(3_000, workerQueueHeartbeatKey(queue))) ?? readHeartbeat(),
+      registeredWorkers: () => registeredWorkers(queue),
     },
     now,
   )

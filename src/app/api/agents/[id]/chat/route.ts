@@ -12,6 +12,7 @@ import { buildAssistantContext } from '@/features/agents/assistant-context'
 import { runAgentExecution } from '@/features/agents/execute-agent'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
+import { assertQueueConsumerAlive, EXECUTION_BACKEND_OFFLINE_MESSAGE } from '@/lib/queue/heartbeat'
 import { rateLimit } from '@/lib/ratelimit'
 import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
@@ -114,11 +115,42 @@ const RESPONSE_SCHEMA = {
   required: ['reply', 'proposal', 'run'],
 } as const
 
-function serializeMessage(message: AgentChatMessage) {
-  const metadata =
-    message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
-      ? (message.metadata as Record<string, unknown>)
-      : {}
+function metadataOf(message: AgentChatMessage): Record<string, unknown> {
+  return message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
+    ? (message.metadata as Record<string, unknown>)
+    : {}
+}
+
+function runExecutionId(message: AgentChatMessage): string | null {
+  const run = metadataOf(message).run as { executionId?: unknown } | null | undefined
+  return typeof run?.executionId === 'string' ? run.executionId : null
+}
+
+/**
+ * The live status of every run the thread started, keyed by execution id.
+ *
+ * The message stores the status as of the reply — `pending` for a queued run,
+ * which nothing ever rewrites — so the badge read "running" forever. One
+ * org-scoped read per thread load replaces that snapshot with what the run
+ * actually did. A run since deleted keeps its snapshot.
+ */
+async function liveRunStatuses(organizationId: string, rows: AgentChatMessage[]): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.map(runExecutionId).filter((id): id is string => Boolean(id)))]
+  if (ids.length === 0) return new Map()
+  const executions = await prisma.agentExecution.findMany({
+    where: { id: { in: ids }, organizationId },
+    select: { id: true, status: true },
+  })
+  return new Map(executions.map((execution) => [execution.id, execution.status]))
+}
+
+function serializeMessage(message: AgentChatMessage, liveStatuses?: Map<string, string>) {
+  const metadata = metadataOf(message)
+  const executionId = runExecutionId(message)
+  const liveStatus = executionId ? liveStatuses?.get(executionId) : undefined
+  const run = metadata.run && typeof metadata.run === 'object'
+    ? { ...(metadata.run as Record<string, unknown>), ...(liveStatus ? { status: liveStatus } : {}) }
+    : null
   return {
     id: message.id,
     role: message.role,
@@ -127,8 +159,9 @@ function serializeMessage(message: AgentChatMessage) {
     proposal: metadata.proposal ?? null,
     appliedAt: metadata.appliedAt ?? null,
     // Set when this reply came from (or started) an agent run: the task that
-    // ran, the execution id, and how it ended.
-    run: metadata.run ?? null,
+    // ran, the execution id, and its status — live when the thread was read
+    // through GET, the reply-time snapshot otherwise.
+    run,
     // Set when applying the proposal created a separate agent rather than
     // updating this one, so the card can still link to it after a reload.
     createdAgentId: metadata.createdAgentId ?? null,
@@ -172,7 +205,8 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       take: 100,
     })
   }
-  return { success: true, sessionId, messages: rows.reverse().map(serializeMessage) }
+  const liveStatuses = await liveRunStatuses(auth.organizationId, rows)
+  return { success: true, sessionId, messages: rows.reverse().map((row) => serializeMessage(row, liveStatuses)) }
 }, { permission: 'agent.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
@@ -330,6 +364,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
           }
         } else if (workersEnabled) {
           try {
+            // The same gate flow dispatch uses: with no live consumer the job
+            // would sit in Redis while the thread said "running" for good.
+            await assertQueueConsumerAlive(Date.now(), QUEUE_NAMES.AGENT_EXECUTION)
             const queue = createQueue(QUEUE_NAMES.AGENT_EXECUTION)
             await queue.add(
               'execute-agent',
@@ -337,10 +374,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
               { jobId: execution.id },
             )
             reply = `${reply}\n\nThe run has started — its output will appear in the activity feed when it finishes.`
-          } catch {
+          } catch (error) {
             runMeta.status = 'failed'
-            reply = 'The run could not be queued — try again in a moment.'
-            await markFailed('Unable to queue agent execution')
+            const offline = error instanceof Error && error.message === EXECUTION_BACKEND_OFFLINE_MESSAGE
+            reply = offline ? EXECUTION_BACKEND_OFFLINE_MESSAGE : 'The run could not be queued — try again in a moment.'
+            await markFailed(offline ? EXECUTION_BACKEND_OFFLINE_MESSAGE : 'Unable to queue agent execution')
           }
         } else {
           runMeta.status = 'failed'

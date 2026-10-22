@@ -547,6 +547,12 @@ export function ArtifactViewer({ id, embedded = false, showAssistant = true, ren
                     <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-horizon-700">The assistant needs an answer</p>
                     <Markdown>{m.question}</Markdown>
                   </div>
+                ) : m.role === 'agent' && m.status === 'pending' && m.approval ? (
+                  <div role="status" className="rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider">Waiting for approval</p>
+                    <Markdown>{m.approval}</Markdown>
+                    <Link href="/approvals" className="mt-1 inline-block text-xs font-medium underline underline-offset-2">Review in Approvals</Link>
+                  </div>
                 ) : m.role === 'agent' && m.status === 'pending' ? (
                   m.executionId ? <RunFeed executionId={m.executionId} status="running" compact quietUntilWork onStatusChange={refresh} /> :
                     <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {m.mode === 'change' ? 'Revising…' : 'Working on it…'}</div>

@@ -484,11 +484,27 @@ async function reconciledChat(chat: ArtifactChatMessage[], organizationId: strin
           else delete message.question
           changed = true
         }
+        // A run paused on an approval is not working and has nothing to ask
+        // here: it says what it is waiting to do, and the approval decides it.
+        const approval = run.status === 'waiting_for_approval'
+          ? (str(pendingQuestion?.question)?.replace(/^Awaiting approval:\s*/i, '') || 'An action this run wants to take needs approval.')
+          : undefined
+        if (message.approval !== approval) {
+          if (approval) message.approval = approval
+          else delete message.approval
+          changed = true
+        }
         continue
       }
-      if (!run) continue
       delete message.question
+      delete message.approval
       changed = true
+      // The run was deleted before this conversation heard how it ended.
+      if (!run) {
+        message.status = 'failed'
+        message.content = 'This run was deleted before it answered, so there is nothing to show. Ask again to retry.'
+        continue
+      }
       const text = typeof (run.output as { summary?: unknown } | null)?.summary === 'string' ? String((run.output as { summary: string }).summary) : ''
       if (run.status === 'completed') {
         const version = await prisma.artifactVersion.findFirst({ where: { executionId: message.executionId, organizationId }, select: { id: true } })

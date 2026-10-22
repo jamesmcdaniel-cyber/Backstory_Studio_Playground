@@ -23,6 +23,9 @@ export type ArtifactChatMessage = {
   /** The question already answered on this message (its tool-call id), so it
    *  is not asked again while the resume is still being picked up. */
   answeredQuestionId?: string
+  /** Set on a pending agent message while its run waits for someone to
+   *  approve an action (what it wants to do); decided on the Approvals page. */
+  approval?: string
   /** The model that answered, when one was picked. */
   model?: string
   createdAt: string

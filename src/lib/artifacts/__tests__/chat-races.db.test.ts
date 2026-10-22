@@ -16,7 +16,7 @@ if (!TEST_DB) {
   process.env.DIRECT_URL = TEST_DB
 
   let prisma: any
-  let seeded: { organizationId: string; userId: string; cleanup: () => Promise<void> }
+  let seeded: { organizationId: string; userId: string; auth: any; cleanup: () => Promise<void> }
   let service: typeof import('../service')
   let chatWrites: typeof import('../chat-writes')
   let restoreExecution: () => void
@@ -117,5 +117,39 @@ if (!TEST_DB) {
     row = await prisma.artifact.findFirstOrThrow({ where: { id: artifact.id, organizationId: seeded.organizationId } })
     assert.equal(row.chat[1].status, 'pending', 'a claim being filled in right now is left alone')
     await assert.rejects(service.askArtifact({ organizationId: seeded.organizationId, userId: seeded.userId, id: artifact.id, message: 'x', mode: 'ask' }), /Wait for the current answer/)
+  })
+
+  test('a run waiting for approval shows as needing approval, and a deleted run settles its message instead of spinning', async () => {
+    const artifact = await freshArtifact('Approval and deletion')
+    const run = await prisma.agentExecution.create({ data: { organizationId: seeded.organizationId, userId: seeded.userId, agentTaskId, agentType: 'CUSTOM', status: 'waiting_for_approval', input: {}, trigger: { type: 'artifact', artifactId: artifact.id }, metadata: { pendingQuestion: { toolCallId: 'tc-1', question: 'Awaiting approval: send the summary to the account team' } } } })
+    await prisma.artifact.update({ where: { id: artifact.id, organizationId: seeded.organizationId }, data: { chat: pendingChat(run.id) } })
+    await service.artifactStatus(seeded.organizationId, artifact.id)
+    let row = await prisma.artifact.findFirstOrThrow({ where: { id: artifact.id, organizationId: seeded.organizationId } })
+    assert.equal(row.chat[1].status, 'pending')
+    assert.match(row.chat[1].approval, /send the summary to the account team/)
+    assert.equal(row.chat[1].question, undefined, 'an approval is not a question the chat can answer')
+    // Approved: the run resumes, and the message is plain pending again.
+    await prisma.agentExecution.update({ where: { id: run.id, organizationId: seeded.organizationId }, data: { status: 'running' } })
+    await service.artifactStatus(seeded.organizationId, artifact.id)
+    row = await prisma.artifact.findFirstOrThrow({ where: { id: artifact.id, organizationId: seeded.organizationId } })
+    assert.equal(row.chat[1].approval, undefined)
+    // An active run cannot be deleted out from under its worker...
+    const { installTestAuth, clearTestAuth } = await import('@/lib/server/__tests__/test-auth')
+    const { NextRequest } = await import('next/server')
+    const { DELETE } = await import('@/app/api/executions/[id]/route')
+    const remove = () => DELETE(new NextRequest(new URL(`http://test/api/executions/${run.id}`), { method: 'DELETE' }) as never, undefined as never)
+    installTestAuth(seeded.auth)
+    try {
+      assert.equal((await remove()).status, 409)
+      assert.ok(await prisma.agentExecution.findFirst({ where: { id: run.id, organizationId: seeded.organizationId } }))
+      // ...but a finished one can, before the chat ever polled it.
+      await prisma.agentExecution.update({ where: { id: run.id, organizationId: seeded.organizationId }, data: { status: 'completed', output: { summary: 'Sent.' } } })
+      assert.equal((await remove()).status, 200)
+    } finally { clearTestAuth() }
+    await service.artifactStatus(seeded.organizationId, artifact.id)
+    row = await prisma.artifact.findFirstOrThrow({ where: { id: artifact.id, organizationId: seeded.organizationId } })
+    assert.equal(row.chat[1].status, 'failed')
+    assert.match(row.chat[1].content, /deleted/)
+    await prisma.agentExecution.deleteMany({ where: { organizationId: seeded.organizationId, agentTaskId, trigger: { path: ['artifactId'], equals: artifact.id } } })
   })
 }

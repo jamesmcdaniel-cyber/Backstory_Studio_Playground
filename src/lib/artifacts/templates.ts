@@ -191,6 +191,8 @@ async function guestView(source: TemplateSource, copyId: string): Promise<GuestC
       status: m.status,
       createdAt: m.createdAt,
       ...(m.question ? { question: m.question } : {}),
+      // What the run wants to do is the workspace's business; that it waits is not.
+      ...(m.approval ? { approval: 'An action this copilot wants to take is waiting for the workspace to approve it.' } : {}),
       // A version of the visitor's own copy: already in their history above.
       ...(m.versionId ? { versionId: m.versionId } : {}),
     })),

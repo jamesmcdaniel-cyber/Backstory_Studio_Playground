@@ -149,7 +149,7 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
 
   const artifact = copy?.kind === 'member' ? copy.artifact : null
   const loaded = copy?.kind === 'guest' || Boolean(artifact)
-  const chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'executionId' | 'question' | 'versionId'>> = copy?.kind === 'guest' ? copy.view.chat : artifact?.chat ?? []
+  const chat: Array<Pick<ArtifactChatMessage, 'role' | 'content' | 'status' | 'createdAt' | 'executionId' | 'question' | 'approval' | 'versionId'>> = copy?.kind === 'guest' ? copy.view.chat : artifact?.chat ?? []
   const latestVersionId = copy?.kind === 'guest' ? copy.view.versionId : artifact?.currentVersionId ?? null
   const title = copy?.kind === 'guest' ? copy.view.title : artifact?.title ?? ''
   // An untouched copy IS the original: keep the page the visitor is already
@@ -453,6 +453,11 @@ export function SharedTemplateCopilot({ token, isPage = true, returning = false,
                   <div role="status" className="rounded-xl border border-horizon-200 bg-horizon-50/60 px-3 py-2">
                     <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-horizon-700">The copilot needs an answer</p>
                     <Markdown>{m.question}</Markdown>
+                  </div>
+                ) : m.role === 'agent' && m.status === 'pending' && m.approval ? (
+                  <div role="status" className="rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 text-amber-950">
+                    <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider">Waiting for approval</p>
+                    <Markdown>{m.approval}</Markdown>
                   </div>
                 ) : m.role === 'agent' && m.status === 'pending' ? (
                   // The run feed reads the app's run APIs, which a guest has no session for.

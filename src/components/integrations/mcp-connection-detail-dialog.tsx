@@ -397,7 +397,7 @@ export function McpConnectionDetailDialog({
           <DialogHeader className="space-y-3 border-b px-6 pb-4 pt-6 text-left">
             <div className="flex flex-wrap items-center justify-between gap-3 pr-8">
               <div className="flex min-w-0 items-center gap-3">
-                <IntegrationLogo slug={connection.provider ?? connection.name} name={name} className="h-9 w-9 rounded-lg" />
+                <IntegrationLogo slug={connection.provider ?? connection.name} name={name} className="h-10 w-10 rounded-lg bg-white p-1.5 ring-1 ring-border" />
                 <div className="min-w-0">
                   <DialogTitle className="truncate text-lg">{name}</DialogTitle>
                   <p className="truncate text-xs text-fg-muted" title={info?.serverUrl ?? connection.serverUrl}>{info?.serverUrl ?? connection.serverUrl}</p>

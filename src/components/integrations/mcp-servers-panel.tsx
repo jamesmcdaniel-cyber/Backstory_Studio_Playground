@@ -30,7 +30,7 @@ function authLabel(auth: SerializedConnection['auth']): string {
 
 /** Chip-sized link styled like a ghost Button, for the anchor-only OAuth action. */
 const linkButtonClass =
-  'inline-flex h-7 items-center justify-center rounded-md border border-input bg-background px-2 text-xs font-medium shadow-1 transition-all duration-fast ease-out-quart hover:border-graphite-300 hover:bg-accent hover:text-accent-foreground'
+  'inline-flex h-7 shrink-0 items-center whitespace-nowrap justify-center rounded-md border border-input bg-background px-2 text-xs font-medium shadow-1 transition-all duration-fast ease-out-quart hover:border-graphite-300 hover:bg-accent hover:text-accent-foreground'
 
 /**
  * Manage custom MCP server connections. Extracted from the former standalone
@@ -369,13 +369,13 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
 
                 {/* Controls only: clicks here never open the detail view. */}
                 {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- a click/key fence around real buttons, not a control itself */}
-                <div className="flex items-center justify-between gap-2 border-t pt-3" onClick={stop} onKeyDown={stop}>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3" onClick={stop} onKeyDown={stop}>
                   {conn.provider ? (
                     <>
                       {conn.isActive && !unhealthy ? (
                         <Badge variant="good" className="text-xs">Enabled</Badge>
                       ) : (
-                        <Badge variant="warn" className="text-xs">{conn.isActive ? 'Needs reconnecting' : 'Needs authorization'}</Badge>
+                        <Badge variant="warn" className="whitespace-nowrap text-xs">{conn.isActive ? 'Needs reconnecting' : 'Needs authorization'}</Badge>
                       )}
                       <div className="flex items-center gap-1">
                         <Button
@@ -404,7 +404,7 @@ export function McpServersPanel({ returnTo = '/integrations?tab=servers' }: { re
                         {!conn.isActive ? (
                           <Badge variant="secondary" className="text-xs">Inactive</Badge>
                         ) : unhealthy ? (
-                          <Badge variant="warn" className="text-xs">Needs reconnecting</Badge>
+                          <Badge variant="warn" className="whitespace-nowrap text-xs">Needs reconnecting</Badge>
                         ) : (
                           <Badge variant="good" className="text-xs">Enabled</Badge>
                         )}

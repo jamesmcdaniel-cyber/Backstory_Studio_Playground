@@ -3,7 +3,7 @@ import { Prisma, type Artifact, type ArtifactVersion } from '@prisma/client'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { dispatchAgentExecution } from '@/features/agents/dispatch'
 import { isTerminalRunStatus } from '@/lib/agents/run-status'
-import { htmlDocumentOf, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdownTitleOf, unwrapHtmlFence } from '@/lib/html-detect'
+import { htmlDocumentOf, htmlHasScript, htmlTitleOf, looksLikeHtml, markdownDocumentOf, markdownTitleOf, unwrapHtmlFence } from '@/lib/html-detect'
 import { deliverableComponentOf, reactArtifactDocument, reactComponentOf } from './runtime'
 import { readAssistantConfig } from './assistant-settings'
 import { readAgentMetadata } from '@/lib/agents/metadata'
@@ -57,10 +57,8 @@ export function isInteractiveKind(kind: string): boolean {
   return kind === 'roi_dashboard' || kind === 'page'
 }
 
-/** Whether HTML carries its own script — tabs, views, charts — and so must run to work. */
-export function htmlHasScript(content: string): boolean {
-  return /<script[\s>]/i.test(content)
-}
+/** Whether HTML carries its own script — tabs, views, charts, inline handlers — and so must run to work. */
+export { htmlHasScript }
 
 /** JSX contains paired HTML tags; recognize the module before generic HTML. */
 export function executionArtifactDocument(summary: string): string | null {
@@ -838,32 +836,49 @@ export async function prepareFlowArtifactVersion(params: { organizationId: strin
   const t = (params.trigger ?? {}) as TriggerShape & { artifactRequest?: unknown }
   const artifactId = str(t.artifactId)
   if (!artifactId) return null
-  const html = findHtml(params.output)
-  if (!html) throw new Error('Artifact publication failed: the flow output did not contain a document. No version was saved.')
-  const target = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId: params.organizationId }, select: { id: true, templateSourceId: true } })
+  const target = await prisma.artifact.findFirst({ where: { id: artifactId, organizationId: params.organizationId }, select: { id: true, kind: true, templateSourceId: true, currentVersionId: true } })
   if (!target) throw new Error('Artifact publication failed: the artifact is no longer available.')
   if (target.templateSourceId) throw new Error('Template copies cannot be changed by flows.')
-  validateArtifactContent(html)
-  await validateArtifactPython(html)
-  await validateArtifactRuntime(html)
+  const content = flowOutputDocumentFor(target.kind, params.output)
+  if (!content) throw new Error('Artifact publication failed: the flow output did not contain a document. No version was saved.')
+  // Held to the target's own limits: an ROI dashboard may be several MB.
+  validateArtifactContent(content, maxArtifactCharsFor(target.kind))
+  await validateArtifactPython(content)
+  await validateArtifactRuntime(content, { declaredTests: await currentDeclaresTests(params.organizationId, target.currentVersionId) })
   return async tx => {
     const existing = await tx.artifactVersion.findFirst({ where: { organizationId: params.organizationId, flowRunId: params.flowRunId }, select: { id: true } })
     if (existing) return existing.id
-    const version = await insertValidatedVersion(tx, { artifactId, organizationId: params.organizationId, content: html, flowRunId: params.flowRunId, request: str(t.artifactRequest), ...(typeof t.artifactBaseVersionId === 'string' ? { expectedVersionId: t.artifactBaseVersionId } : {}) })
+    const version = await insertValidatedVersion(tx, { artifactId, organizationId: params.organizationId, content, flowRunId: params.flowRunId, request: str(t.artifactRequest), ...(typeof t.artifactBaseVersionId === 'string' ? { expectedVersionId: t.artifactBaseVersionId } : {}) })
     return version.id
   }
 }
 
-/** The first HTML document inside a flow's output — a string, or a string field of an object. */
-function findHtml(output: unknown, depth = 0): string | null {
+/**
+ * What a flow's output adds to an artifact of this kind: an HTML document;
+ * or, for a Markdown document, its Markdown — a headed document anywhere in
+ * the output, else the output's own text (the string itself, or its summary,
+ * text, markdown, content or output field).
+ */
+export function flowOutputDocumentFor(kind: string, output: unknown): string | null {
+  const html = findDocument(output, htmlDocumentOf)
+  if (html || kind !== 'document') return html
+  const markdown = findDocument(output, markdownDocumentOf)
+  if (markdown) return markdown
+  const record = output && typeof output === 'object' && !Array.isArray(output) ? output as Record<string, unknown> : null
+  const text = typeof output === 'string' ? output : ['summary', 'text', 'markdown', 'content', 'output'].map((key) => record?.[key]).find((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+  return text ? unwrapHtmlFence(text).trim() || null : null
+}
+
+/** The first document inside a flow's output — a string, or a string field of an object. */
+function findDocument(output: unknown, documentOf: (text: string) => string | null, depth = 0): string | null {
   if (depth > 3 || output === null || output === undefined) return null
-  if (typeof output === 'string') return htmlDocumentOf(output)
+  if (typeof output === 'string') return documentOf(output)
   if (Array.isArray(output)) {
-    for (const item of output) { const found = findHtml(item, depth + 1); if (found) return found }
+    for (const item of output) { const found = findDocument(item, documentOf, depth + 1); if (found) return found }
     return null
   }
   if (typeof output === 'object') {
-    for (const value of Object.values(output as Record<string, unknown>)) { const found = findHtml(value, depth + 1); if (found) return found }
+    for (const value of Object.values(output as Record<string, unknown>)) { const found = findDocument(value, documentOf, depth + 1); if (found) return found }
   }
   return null
 }

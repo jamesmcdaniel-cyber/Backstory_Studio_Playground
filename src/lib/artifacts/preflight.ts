@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { singleFlight } from '@/lib/single-flight'
 import { apiLogger } from '@/lib/logger'
 import { ArtifactContentError } from './validate-content'
+import { htmlHasScript } from '@/lib/html-detect'
 
 export type ArtifactPreflightResult = {
   /** A 1280×800 PNG of the page as it passed (base64), when the validator took one. */
@@ -88,7 +89,8 @@ export function validateArtifactRuntime(content: string, check: ArtifactRuntimeC
 /** Browser startup gate. No generated code executes in the API or agent worker. */
 async function validateRuntime(content: string, declaredTests: boolean): Promise<ArtifactPreflightResult> {
   const none: ArtifactPreflightResult = { screenshot: null }
-  if (!/<script\b|<py-script\b|\bexport\s+default\b|\bon\w+\s*=/i.test(content)) return none
+  // What serving runs (see htmlHasScript), plus Python and React modules.
+  if (!htmlHasScript(content) && !/<py-script\b|\bexport\s+default\b/i.test(content)) return none
   const endpoint = process.env.ARTIFACT_VALIDATOR_URL
   const token = process.env.ARTIFACT_VALIDATOR_TOKEN
   if (!endpoint || !token) {

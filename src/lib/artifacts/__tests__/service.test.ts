@@ -12,6 +12,37 @@ test('legacy raw JSX is compiled in an opaque-origin sandbox, not served as HTML
   assert.match(await response.text(), /React\.createElement/)
 })
 
+test('inline event handlers are script: served runnable and sent to the browser check alike', async () => {
+  const page = '<!doctype html><html><body><button onclick="this.textContent=\'Done\'">Run</button></body></html>'
+  const response = artifactPageResponse({ kind: 'report', content: page }, 'https://example.com')
+  assert.match(response.headers.get('content-security-policy') ?? '', /^sandbox allow-scripts/, 'its buttons work')
+  assert.doesNotMatch(response.headers.get('content-security-policy') ?? '', /allow-same-origin/)
+  assert.equal(isInteractiveContent('report', page), true)
+  // Prose that merely says "onclick=" is not a handler.
+  assert.equal(isInteractiveContent('report', '<p>Set onclick= on the button to wire it.</p>'), false)
+  const { ArtifactValidatorUnavailableError, validateArtifactRuntime } = await import('../preflight')
+  const saved = process.env.ARTIFACT_RUNTIME_PREFLIGHT
+  process.env.ARTIFACT_RUNTIME_PREFLIGHT = 'required'
+  try {
+    // Unconfigured and required: a page the check would run is refused as unavailable; one it would not run passes.
+    await assert.rejects(validateArtifactRuntime(page), ArtifactValidatorUnavailableError)
+    await validateArtifactRuntime('<p>Set onclick= on the button to wire it.</p>')
+  } finally { if (saved === undefined) delete process.env.ARTIFACT_RUNTIME_PREFLIGHT; else process.env.ARTIFACT_RUNTIME_PREFLIGHT = saved }
+})
+
+test('a flow publishes to a Markdown document as Markdown, and to an ROI dashboard within the ROI limit', async () => {
+  const { flowOutputDocumentFor } = await import('../service')
+  const markdown = '# Weekly pipeline\n\nWin rate rose four points.\n\n## Risks\n\nAcme slipped a quarter.'
+  assert.equal(flowOutputDocumentFor('document', markdown), markdown)
+  assert.equal(flowOutputDocumentFor('document', { summary: markdown, steps: 3 }), markdown)
+  assert.equal(flowOutputDocumentFor('document', { ok: true }), null)
+  // An HTML report still needs an HTML document; Markdown is not one.
+  assert.equal(flowOutputDocumentFor('report', markdown), null)
+  const page = '<!doctype html><html><body><h1>Q3</h1></body></html>'
+  assert.equal(flowOutputDocumentFor('report', { html: page }), page)
+  assert.equal(flowOutputDocumentFor('document', page), page, 'a document may be revised as HTML, as a run can')
+})
+
 test('React modules with paired HTML tags register as executable artifact documents', () => {
   const source = 'import React from "react"; export default function App(){return <div><h1>QA</h1><p>Evidence</p></div>}'
   const content = executionArtifactDocument(source)

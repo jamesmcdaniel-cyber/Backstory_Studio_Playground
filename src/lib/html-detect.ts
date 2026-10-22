@@ -70,6 +70,16 @@ export function htmlDocumentOf(text: string): string | null {
   return lead ? content.slice(lead[0].length).trim() : null
 }
 
+/**
+ * Whether HTML carries script that must run for it to work: a <script>, or an
+ * inline event handler on a tag (onclick=…). Serving (which grants
+ * allow-scripts) and the browser check decide on this one rule, so a page
+ * whose buttons use handlers is neither served dead nor left unchecked.
+ */
+export function htmlHasScript(content: string): boolean {
+  return /<script[\s>]|<[a-z][\w-]*(?:\s[^<>]*?)?\son[a-z]{3,}\s*=/i.test(content)
+}
+
 /** A title for a report: its <title>, else its first heading, else null. */
 export function htmlTitleOf(html: string): string | null {
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]

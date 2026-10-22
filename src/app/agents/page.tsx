@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { AlertCircle, ArrowLeft, Bot, FileText, List, Loader2, Play, Plus, Settings2, Sparkles, X } from 'lucide-react'
 import { AgentActivityPane, resultText } from './agent-activity-pane'
+import { AgentScopePanel } from '@/components/agents/agent-scope-card'
+import { ActionLedger } from '@/components/agents/action-ledger'
 import { AgentsGallery } from './agents-gallery'
 import { AgentSkillsPanel } from './agent-skills-panel'
 import { AgentConfigForm, type AgentDraft } from './agent-config-form'
@@ -59,7 +61,7 @@ function AgentHQ() {
   const [configureOpen, setConfigureOpen] = useState(false)
   // The left pane shows either this agent's work, or the skills library scoped
   // to it. The full library still lives under /templates.
-  const [workspaceTab, setWorkspaceTab] = useState<'agent' | 'skills'>('agent')
+  const [workspaceTab, setWorkspaceTab] = useState<'agent' | 'skills' | 'access' | 'actions'>('agent')
   const [focusRunId, setFocusRunId] = useState<string | null>(null)
   // The run expanded in the left pane, whose output renders in the right pane.
   const [selectedRun, setSelectedRun] = useState<Activity | null>(null)
@@ -605,6 +607,9 @@ function AgentHQ() {
                 {([
                   { id: 'agent', label: 'Work' },
                   { id: 'skills', label: 'Skills' },
+                  // Trust: what it may do (resolved like a run) and what it did.
+                  { id: 'access', label: 'Access' },
+                  { id: 'actions', label: 'Actions' },
                 ] as const).map((tab) => (
                   <button
                     key={tab.id}
@@ -795,6 +800,14 @@ function AgentHQ() {
               agent={selectedAgent}
               onChanged={() => load(true).catch(() => undefined)}
             />
+          )}
+
+          {!loading && !showSetup && selectedAgent && workspaceTab === 'access' && (
+            <AgentScopePanel key={selectedAgent.id} agentId={selectedAgent.id} className="p-4" />
+          )}
+
+          {!loading && !showSetup && selectedAgent && workspaceTab === 'actions' && (
+            <ActionLedger key={selectedAgent.id} filter={{ agentId: selectedAgent.id }} className="p-4" />
           )}
 
           {!loading && !showSetup && !selectedAgent && agents.length === 0 && (

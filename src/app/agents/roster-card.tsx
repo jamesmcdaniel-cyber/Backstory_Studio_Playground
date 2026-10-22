@@ -3,7 +3,9 @@
 import React from 'react'
 import { Settings2 } from 'lucide-react'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
+import { AgentScopeSummaryLine } from '@/components/agents/agent-scope-card'
 import { cn } from '@/lib/utils'
+import type { AgentScopeSummary } from '@/lib/agents/scope-types'
 
 /**
  * Lifetime run stats for one card, already aggregated by the caller.
@@ -31,6 +33,7 @@ export function RosterCard({
   onOpen,
   onConfigure,
   configureLabel,
+  scope,
 }: {
   /** Stable avatar seed — the teammate id, or the agent id for a solo agent. */
   seed: string
@@ -44,6 +47,12 @@ export function RosterCard({
   onOpen: () => void
   onConfigure: () => void
   configureLabel: string
+  /**
+   * What the agent can do, compact: counts and badges from the same
+   * resolution a run uses (/api/agents/scope). Omit to leave the line out;
+   * null while it loads keeps the card's height steady.
+   */
+  scope?: AgentScopeSummary | null
 }) {
   const finished = stats.completed + stats.failed + stats.blocked
   // Success rate is measured-only: an agent whose runs are known solely via
@@ -94,6 +103,7 @@ export function RosterCard({
           ) : null}
         </span>
         {subtitle && <span className="mt-1 line-clamp-1 w-full text-xs text-muted-foreground">{subtitle}</span>}
+        {scope !== undefined && <AgentScopeSummaryLine summary={scope} className="mt-2" />}
         <span className="mt-4 grid w-full grid-cols-2 divide-x border-t pt-3">
           <span className="flex flex-col gap-0.5 px-2">
             <span className="text-base font-semibold tabular-nums text-foreground">{runsLabel}</span>

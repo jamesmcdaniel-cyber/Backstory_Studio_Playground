@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RecommendationsBar } from '@/components/onboarding/recommendations-bar'
 import { buildRoster, type CardStats } from '@/lib/agents/roster'
+import { mergeScopeSummaries, type AgentScopeSummary } from '@/lib/agents/scope-types'
 
 import type { Agent, Teammate } from '@/lib/types'
 
@@ -38,6 +39,9 @@ export function AgentsGallery({
   onCreateAgent: () => void
 }) {
   const [kpis, setKpis] = useState<AgentKpis>({})
+  // What each agent can do, compact — fetched after the roster paints (it
+  // resolves every agent's tools the way a run does, so it is the slow call).
+  const [scopes, setScopes] = useState<Record<string, AgentScopeSummary> | null>(null)
   const [teammates, setTeammates] = useState<Teammate[]>([])
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [teammateLabels, setTeammateLabels] = useState<Record<string, string>>({})
@@ -60,6 +64,10 @@ export function AgentsGallery({
       .then((data) => { if (data?.kpis) setKpis(data.kpis) })
       .catch(() => undefined)
     loadTeammates()
+    fetch('/api/agents/scope', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => setScopes(data?.scopes ?? {}))
+      .catch(() => setScopes({}))
   }, [loadTeammates])
 
   // The unfiltered roster drives the label backfill and the empty state, so a
@@ -193,6 +201,7 @@ export function AgentsGallery({
             onOpen={() => (soleAgent ? onOpenAgent(soleAgent.id) : setOpenTeammateId(teammate.id))}
             onConfigure={() => (soleAgent ? onEditAgent(soleAgent.id) : setOpenTeammateId(teammate.id))}
             configureLabel={soleAgent ? `Configure ${soleAgent.title}` : `Manage ${teammate.name}`}
+            scope={scopes ? mergeScopeSummaries(roster.map((job) => scopes[job.id]).filter(Boolean)) : null}
           />
         ))}
         {agentCards.map(({ agent, stats, presence, derivedRole }) => (
@@ -207,6 +216,7 @@ export function AgentsGallery({
             onOpen={() => onOpenAgent(agent.id)}
             onConfigure={() => onEditAgent(agent.id)}
             configureLabel={`Configure ${agent.title}`}
+            scope={scopes ? scopes[agent.id] ?? null : null}
           />
         ))}
         {/* The create tile belongs to the roster, not to a filtered view of it. */}
@@ -231,6 +241,7 @@ export function AgentsGallery({
           teammate={openCard.teammate}
           agents={openCard.agents}
           kpis={kpis}
+          scopes={scopes ?? {}}
           roleLabel={openCard.teammate.roleLabel || teammateLabels[openCard.teammate.id] || null}
           onOpenAgent={onOpenAgent}
           onEditAgent={onEditAgent}

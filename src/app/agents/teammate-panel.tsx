@@ -4,8 +4,10 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
-import { Camera, Check, Pencil, Play, Plus, Settings2, X } from 'lucide-react'
+import { Camera, Check, Pencil, Play, Plus, Settings2, ShieldCheck, X } from 'lucide-react'
 import { AgentAvatar } from '@/components/agents/agent-avatar'
+import { AgentScopePanel, AgentScopeSummaryLine } from '@/components/agents/agent-scope-card'
+import type { AgentScopeSummary } from '@/lib/agents/scope-types'
 import { AvatarPicker } from '@/components/agents/avatar-picker'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,6 +30,7 @@ export function TeammatePanel({
   teammate,
   agents,
   kpis,
+  scopes = {},
   roleLabel,
   onOpenAgent,
   onEditAgent,
@@ -37,6 +40,8 @@ export function TeammatePanel({
   teammate: Teammate
   agents: Agent[]
   kpis: Kpis
+  /** Compact "what it can do" per job, from /api/agents/scope. */
+  scopes?: Record<string, AgentScopeSummary>
   roleLabel: string | null
   onOpenAgent: (id: string) => void
   onEditAgent: (id: string) => void
@@ -49,6 +54,8 @@ export function TeammatePanel({
   const [confirmDisband, setConfirmDisband] = useState(false)
   const [pickingAvatar, setPickingAvatar] = useState(false)
   const [savingAvatar, setSavingAvatar] = useState(false)
+  // The job whose full scope card is open below its row.
+  const [scopeOpenId, setScopeOpenId] = useState<string | null>(null)
 
   const chooseAvatar = async (avatarSeed: string | null) => {
     setSavingAvatar(true)
@@ -124,7 +131,7 @@ export function TeammatePanel({
   return (
     <>
       <Dialog open onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className={scopeOpenId ? 'max-w-2xl' : 'max-w-lg'}>
           <DialogHeader>
             <div className="flex items-start gap-3">
               <button
@@ -190,7 +197,7 @@ export function TeammatePanel({
             </div>
           </DialogHeader>
 
-          <div className="-mx-1 max-h-80 overflow-y-auto px-1">
+          <div className={scopeOpenId ? '-mx-1 max-h-[60vh] overflow-y-auto px-1' : '-mx-1 max-h-80 overflow-y-auto px-1'}>
             {agents.length === 0 ? (
               <p className="rounded-xl border border-dashed p-4 text-center text-sm text-muted-foreground">
                 No jobs yet. Install a template to give this agent something to do.
@@ -200,37 +207,53 @@ export function TeammatePanel({
                 {agents.map((agent) => {
                   const kpi = kpis[agent.id]
                   const runs = kpi?.runs ?? agent.executionCount ?? 0
+                  const scopeOpen = scopeOpenId === agent.id
                   return (
-                    <li key={agent.id} className="flex items-center gap-2 p-2.5">
-                      <button
-                        type="button"
-                        onClick={() => onOpenAgent(agent.id)}
-                        className="min-w-0 flex-1 rounded-lg px-1 text-left transition-colors duration-150 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
-                      >
-                        <span className="line-clamp-1 block text-sm font-medium text-foreground">{agent.title}</span>
-                        <span className="block text-xs text-muted-foreground">
-                          {agent.roleLabel ? `${agent.roleLabel} · ` : ''}
-                          {runs === 1 ? '1 run' : `${runs.toLocaleString()} runs`}
-                        </span>
-                      </button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => onOpenAgent(agent.id)}
-                        aria-label={`Open ${agent.title}`}
-                        title="Open"
-                      >
-                        <Play className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => onEditAgent(agent.id)}
-                        aria-label={`Configure ${agent.title}`}
-                        title="Configure"
-                      >
-                        <Settings2 className="h-4 w-4" />
-                      </Button>
+                    <li key={agent.id} className="p-2.5">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onOpenAgent(agent.id)}
+                          className="min-w-0 flex-1 rounded-lg px-1 text-left transition-colors duration-150 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+                        >
+                          <span className="line-clamp-1 block text-sm font-medium text-foreground">{agent.title}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {agent.roleLabel ? `${agent.roleLabel} · ` : ''}
+                            {runs === 1 ? '1 run' : `${runs.toLocaleString()} runs`}
+                          </span>
+                          {scopes[agent.id] && <AgentScopeSummaryLine summary={scopes[agent.id]} className="mt-1 justify-start" />}
+                        </button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => setScopeOpenId(scopeOpen ? null : agent.id)}
+                          aria-label={`What ${agent.title} can do`}
+                          aria-expanded={scopeOpen}
+                          title="What it can do"
+                          className={scopeOpen ? 'bg-indigo-50 text-indigo-700' : undefined}
+                        >
+                          <ShieldCheck className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => onOpenAgent(agent.id)}
+                          aria-label={`Open ${agent.title}`}
+                          title="Open"
+                        >
+                          <Play className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => onEditAgent(agent.id)}
+                          aria-label={`Configure ${agent.title}`}
+                          title="Configure"
+                        >
+                          <Settings2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      {scopeOpen && <AgentScopePanel agentId={agent.id} className="mt-3 border-t pt-3" />}
                     </li>
                   )
                 })}

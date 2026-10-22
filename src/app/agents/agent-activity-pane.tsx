@@ -38,6 +38,7 @@ import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { humanizeToolName } from '@/lib/flows/humanize-tool-name'
 import { cn } from '@/lib/utils'
+import { ActionLedger } from '@/components/agents/action-ledger'
 import { isCancellableRunStatus, isTerminalRunStatus } from '@/lib/agents/run-status'
 import {
   buildProcessTimeline,
@@ -730,6 +731,10 @@ function RunRow({
           {suggestions.length > 0 && (
             <SuggestionsCard suggestions={suggestions} agentId={agentId} />
           )}
+
+          {/* What this run changed outside Backstory, with Undo where the
+              provider allows it. Renders nothing for a run that changed nothing. */}
+          {!isActive && <ActionLedger filter={{ runId: activity.id }} compact />}
 
           {/* The run's OUTPUT is shown in the assistant pane on the right (that
               surface holds agent output + the conversation); the left pane is

@@ -48,6 +48,8 @@ export type ScopeConnection = {
   name: string
   /** 'people_ai' | 'mcp' | 'native' | 'nango' — and 'external' for a reuser's own source. */
   plane: string
+  /** The runtime provider id ('nango:slack', 'snowflake', an MCP slug) — picks the logo. */
+  provider: string
   actsAs: ScopeActsAs
   /** Attached, but no usable connection resolved for this run. */
   unavailable?: string
@@ -106,6 +108,8 @@ export type AgentScopeSummary = {
   agentRequiresApproval: boolean
   scheduled: boolean
   triggerCount: number
+  /** Set when this line stands for several jobs (a teammate): counts are the widest job's. */
+  jobs?: number
 }
 
 export function countScope(connections: ScopeConnection[]): ScopeCounts {
@@ -133,5 +137,31 @@ export function summarizeScope(scope: AgentScope): AgentScopeSummary {
     agentRequiresApproval: scope.approval.agentRequiresApproval,
     scheduled: scope.triggers.some((trigger) => trigger.kind === 'schedule'),
     triggerCount: scope.triggers.length,
+  }
+}
+
+/**
+ * One line for a teammate fronting several jobs. Counts are the WIDEST job's
+ * (per field) — the line then reads "up to" — and "asks first" holds only when
+ * every job asks. Each job's own card is one click away in the teammate panel.
+ */
+export function mergeScopeSummaries(summaries: AgentScopeSummary[]): AgentScopeSummary | null {
+  if (!summaries.length) return null
+  if (summaries.length === 1) return summaries[0]
+  const max = (pick: (counts: ScopeCounts) => number) => Math.max(...summaries.map((summary) => pick(summary.counts)))
+  return {
+    counts: {
+      connections: max((c) => c.connections),
+      tools: max((c) => c.tools),
+      reads: max((c) => c.reads),
+      writes: max((c) => c.writes),
+      needsApproval: max((c) => c.needsApproval),
+      blocked: max((c) => c.blocked),
+    },
+    actsAsRunner: summaries.some((summary) => summary.actsAsRunner),
+    agentRequiresApproval: summaries.every((summary) => summary.agentRequiresApproval),
+    scheduled: summaries.some((summary) => summary.scheduled),
+    triggerCount: summaries.reduce((total, summary) => total + summary.triggerCount, 0),
+    jobs: summaries.length,
   }
 }

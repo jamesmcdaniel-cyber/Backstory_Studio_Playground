@@ -73,7 +73,7 @@ export function scopeConnectionsFromGroups(
     const actsAs: ScopeActsAs = group.credential?.actsAs ?? (group.plane === 'native' ? 'workspace' : 'none')
     let connection = byKey.get(key)
     if (!connection) {
-      connection = { key, name: group.name.replace(/ \(send\)$/, ''), plane: group.plane, actsAs, tools: [] }
+      connection = { key, name: group.name.replace(/ \(send\)$/, ''), plane: group.plane, provider: group.provider, actsAs, tools: [] }
       byKey.set(key, connection)
     }
     if (!group.client) {

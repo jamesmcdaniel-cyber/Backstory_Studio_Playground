@@ -18,6 +18,7 @@ import type { FlowGraph } from '@/lib/flows/graph'
 import { STATUS_DOT, STATUS_TEXT } from '@/lib/flows/node-presentation'
 import { runIsDegraded } from '@/components/flows/run-panel'
 import { cn } from '@/lib/utils'
+import { ActionLedger } from '@/components/agents/action-ledger'
 
 type RunStepSummary = { nodeId: string; status: string; order: number; error?: string | null; warnings?: string[] | null }
 type RunWaiting = { nodeId: string; kind: 'input' | 'approval' | 'unknown'; question?: string; stepKey?: string; iteration?: number }
@@ -402,6 +403,7 @@ export default function FlowActivityPage() {
                             })}
                           </div>
                         )}
+                        <ActionLedger filter={{ runId: run.id }} compact className="px-6 pb-3 pt-1" />
                       </TableCell>
                     </TableRow>
                   )}

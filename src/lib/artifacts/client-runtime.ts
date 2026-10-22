@@ -53,6 +53,7 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
   function stateTimedOut(id,reject){return setTimeout(function(){pending.delete(id);reject(new Error('State service did not respond. Changes are not saved.'));},STATE_TIMEOUT_MS);}
   window.addEventListener('message', function(e){
     if(e.source !== window.parent || !e.data) return;
+    if(e.data.type === 'backstory:shared-state-changed'){ applyShared(e.data); return; }
     var p = pending.get(e.data.id); if(!p) return;
     // The viewer acknowledges a request before its fetch: a bridge is here,
     // however slow its first load, so wait for its answer (it gives up at 12s).
@@ -75,6 +76,47 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
     });
   }
   var slots = new Map();
+  // Live shared state: the viewer relays another person's save as
+  // {key,value,revision}. The highest revision this page holds per key drops
+  // echoes and stale deliveries; a slot with an unsaved local edit keeps it
+  // (the next save meets the revision check and its conflict path).
+  var sharedKnown = new Map(), sharedWatchers = new Map(), sharedSaving = new Map(), sharedHeld = new Map();
+  function noteShared(key,revision){if(typeof revision==='number'&&revision>(sharedKnown.get(key)||0))sharedKnown.set(key,revision);}
+  function applyShared(d){
+    if(typeof d.key!=='string'||typeof d.revision!=='number'||!(d.revision>0))return;
+    var s=slots.get('shared:'+d.key);
+    if(s){
+      // Still loading: the load applies whichever is newer.
+      if(!s.ready){if(!s.remote||d.revision>s.remote.revision)s.remote={value:d.value,revision:d.revision};return;}
+      if(d.revision<=s.revision)return;
+      if(s.dirty||s.saving||s.flushTimer||s.recovering||s.error){if(!s.stale){s.stale=true;s.emit();}return;}
+      s.value=d.value;s.revision=d.revision;s.stale=false;
+    }else{
+      if(d.revision<=(sharedKnown.get(d.key)||0))return;
+      // An HTML save of this key is in flight: judge the change once it lands.
+      if(sharedSaving.get(d.key)){var h=sharedHeld.get(d.key);if(!h||d.revision>h.revision)sharedHeld.set(d.key,d);return;}
+    }
+    noteShared(d.key,d.revision);
+    if(s)s.emit();
+    var fns=sharedWatchers.get(d.key);
+    if(fns)Array.from(fns).forEach(function(fn){try{fn({key:d.key,value:d.value,revision:d.revision});}catch(x){record(x);}});
+  }
+  function onSharedStateChange(key,fn){
+    if(typeof key!=='string'||!/^[a-zA-Z0-9_-]{1,64}$/.test(key)||typeof fn!=='function')throw new Error('onSharedStateChange(key, callback): key is letters, digits, underscore or hyphen (max 64).');
+    if(!sharedWatchers.has(key))sharedWatchers.set(key,new Set());
+    sharedWatchers.get(key).add(fn);
+    if(window.parent!==window)window.parent.postMessage({type:'backstory:shared-watch',key:key},'*');
+    return function(){var fns=sharedWatchers.get(key);if(fns)fns.delete(fn);};
+  }
+  async function saveShared(key,value,revision){
+    sharedSaving.set(key,(sharedSaving.get(key)||0)+1);
+    try{var result=await request('set',{key:key,value:value,revision:revision,shared:true});noteShared(key,result&&result.revision);return result;}
+    finally{
+      var left=sharedSaving.get(key)-1;
+      if(left>0)sharedSaving.set(key,left);
+      else{sharedSaving.delete(key);var held=sharedHeld.get(key);sharedHeld.delete(key);if(held)applyShared(held);}
+    }
+  }
   function canonical(value){return JSON.stringify(value,function(key,v){if(!v||typeof v!=='object'||Array.isArray(v))return v;var sorted={};Object.keys(v).sort().forEach(function(k){sorted[k]=v[k];});return sorted;});}
   var manualDirty=false;
   function signalDirty(){window.parent.postMessage({type:'backstory:dirty',dirty:manualDirty||Array.from(slots.values()).some(function(s){return s.saving||s.dirty;})},'*');}
@@ -105,16 +147,16 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
         if(result.revision!==s.revision)throw new Error('Another save changed this data. Export your draft, then reload saved data before merging.');
         var saved=await request('set',{key:key,value:s.value,revision:result.revision,shared:s.shared});s.revision=saved.revision;s.dirty=false;
       }
-      s.error=null;manualDirty=false;if(s.notice){s.notice.remove();s.notice=null;}
+      s.error=null;s.stale=false;manualDirty=false;if(s.notice){s.notice.remove();s.notice=null;}
     }catch(e){s.error=e.message;recovery(s,key);}finally{s.recovering=false;s.emit();}
   }
   function slot(key, initial, shared){
     var slotId=(shared?'shared:':'private:')+key;
     if(slots.has(slotId)) return slots.get(slotId);
-    var s={value:typeof initial==='function'?initial():initial,revision:0,ready:false,readOnly:false,error:null,saving:false,dirty:false,recovering:false,writes:0,flushTimer:null,listeners:new Set(),chain:Promise.resolve(),shared:!!shared};
+    var s={value:typeof initial==='function'?initial():initial,revision:0,ready:false,readOnly:false,error:null,saving:false,dirty:false,recovering:false,stale:false,remote:null,writes:0,flushTimer:null,listeners:new Set(),chain:Promise.resolve(),shared:!!shared};
     slots.set(slotId,s);
     s.emit=function(){s.listeners.forEach(function(fn){fn();});signalDirty();};
-    s.load=request('get',{key:key,shared:s.shared}).then(function(r){if(r.revision) s.value=r.value;s.revision=r.revision;s.readOnly=!!r.readOnly;s.ready=true;s.emit();}).catch(function(e){
+    s.load=request('get',{key:key,shared:s.shared}).then(function(r){var value=r.value,revision=r.revision;if(s.remote&&s.remote.revision>(revision||0)){value=s.remote.value;revision=s.remote.revision;}s.remote=null;if(revision) s.value=value;s.revision=revision;s.readOnly=!!r.readOnly;s.ready=true;s.emit();}).catch(function(e){
       // No bridge: the page works on its initial data, read-only, with no banner.
       if(e.noBridge){s.readOnly=true;s.ready=true;s.emit();return;}
       s.error=e.message;recovery(s,key);s.emit();});
@@ -149,12 +191,13 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
       if(!s.flushTimer)s.flushTimer=setTimeout(function(){flush(s,key);},FLUSH_MS);
       s.emit();
     }
-    return [s.value,R.useCallback(set,[s,key]),{ready:s.ready,readOnly:s.readOnly,shared:s.shared,saving:s.saving,error:s.error,dirty:s.dirty,recovering:s.recovering,retry:function(){return recover(s,key,false);},reload:function(){return recover(s,key,true);}}];
+    return [s.value,R.useCallback(set,[s,key]),{ready:s.ready,readOnly:s.readOnly,shared:s.shared,saving:s.saving,error:s.error,dirty:s.dirty,recovering:s.recovering,stale:s.stale,retry:function(){return recover(s,key,false);},reload:function(){return recover(s,key,true);}}];
   }
   function useArtifactState(key, initial){return useStateSlot(key,initial,false);}
   // Shared state: one value for everyone who opens the artifact, keyed by
   // artifact + key alone. Readers see it; editors change it; a conflict
-  // means someone else saved first.
+  // means someone else saved first. Live: another viewer's save re-renders
+  // this one (applyShared) unless it holds an unsaved edit (shared.stale).
   function useSharedArtifactState(key, initial){return useStateSlot(key,initial,true);}
   var worker=null, active=null, jobs=[], globals={}, pythonSeq=0;
   function pump(){
@@ -190,7 +233,7 @@ export const ARTIFACT_CLIENT_RUNTIME = String.raw`
   // Compatibility facade for generated components that previously checked
   // window.pyodide. Execution initializes lazily, in an isolated worker.
   window.pyodide={runPythonAsync:function(code){return runPython(code,null);},globals:{set:function(k,v){globals[k]=v;},delete:function(k){delete globals[k];}},loadPackagesFromImports:function(){return Promise.resolve();}};
-  window.BackstoryArtifact={useArtifactState:useArtifactState,useSharedArtifactState:useSharedArtifactState,setDirty:function(value){manualDirty=!!value;signalDirty();},loadState:function(key){return request('get',{key:key});},saveState:async function(key,value,revision){manualDirty=true;signalDirty();var result=await request('set',{key:key,value:value,revision:revision});manualDirty=false;signalDirty();return result;},loadSharedState:function(key){return request('get',{key:key,shared:true});},saveSharedState:async function(key,value,revision){manualDirty=true;signalDirty();var result=await request('set',{key:key,value:value,revision:revision,shared:true});manualDirty=false;signalDirty();return result;},runPython:runPython,cancelPython:cancelPython};
+  window.BackstoryArtifact={useArtifactState:useArtifactState,useSharedArtifactState:useSharedArtifactState,setDirty:function(value){manualDirty=!!value;signalDirty();},loadState:function(key){return request('get',{key:key});},saveState:async function(key,value,revision){manualDirty=true;signalDirty();var result=await request('set',{key:key,value:value,revision:revision});manualDirty=false;signalDirty();return result;},loadSharedState:function(key){return request('get',{key:key,shared:true}).then(function(r){noteShared(key,r&&r.revision);return r;});},saveSharedState:async function(key,value,revision){manualDirty=true;signalDirty();var result=await saveShared(key,value,revision);manualDirty=false;signalDirty();return result;},onSharedStateChange:onSharedStateChange,runPython:runPython,cancelPython:cancelPython};
 })();
 `
 

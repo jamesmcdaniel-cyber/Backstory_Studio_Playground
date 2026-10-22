@@ -28,6 +28,20 @@ function looksText(buffer: Buffer): boolean {
   return replacements / Math.max(1, decoded.length) < 0.01
 }
 
+export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
+/**
+ * A ZIP that is a Word document. Word writes `[Content_Types].xml` and
+ * `word/...` entries whose names sit in the local headers at the front of the
+ * archive, so the verification head (not just a whole buffer) can see them; a
+ * ZIP the uploader labelled DOCX is taken at its word for the TYPE, and the
+ * reader in lib/knowledge/docx.ts is what proves it is readable.
+ */
+function looksDocx(buffer: Buffer, declared: string, filename: string): boolean {
+  if (/officedocument\.wordprocessingml\.(document|template)/i.test(declared) || /\.docx$/i.test(filename)) return true
+  return buffer.includes('word/document.xml') || (buffer.includes('[Content_Types].xml') && buffer.includes('word/'))
+}
+
 /** Derive a trustworthy content type from magic bytes/content, not the browser. */
 export function detectFileMime(buffer: Buffer, declared: string, filename: string): string {
   if (buffer.subarray(0, 5).toString('ascii') === '%PDF-') return 'application/pdf'
@@ -35,7 +49,7 @@ export function detectFileMime(buffer: Buffer, declared: string, filename: strin
   if (startsWith(buffer, [0xff, 0xd8, 0xff])) return 'image/jpeg'
   if (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' || buffer.subarray(0, 6).toString('ascii') === 'GIF89a') return 'image/gif'
   if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp'
-  if (startsWith(buffer, [0x50, 0x4b, 0x03, 0x04])) return 'application/zip'
+  if (startsWith(buffer, [0x50, 0x4b, 0x03, 0x04])) return looksDocx(buffer, declared, filename) ? DOCX_MIME : 'application/zip'
   if (looksText(buffer)) {
     if (/\.jsonl?$/i.test(filename) || /^application\/json/i.test(declared)) return 'application/json'
     if (/\.csv$/i.test(filename) || /^application\/csv/i.test(declared)) return 'text/csv'
@@ -50,6 +64,12 @@ export function verifyFileMime(buffer: Buffer, declared: string, filename: strin
   if ((/^application\/pdf/i.test(declared) || /\.pdf$/i.test(filename)) && detected !== 'application/pdf') {
     throw new FileRejectedError('The uploaded file is named or labeled as a PDF but its contents are not a valid PDF.')
   }
+  // A DOCX label on something that is not a ZIP (a password-protected OLE
+  // file, a truncated download) is NOT refused here, unlike a fake PDF: a flow
+  // download's job is to keep the bytes, and the knowledge path already
+  // rejects an unreadable DOCX by name (DocxExtractionError). It is simply
+  // never stored AS a DOCX — the content-derived type wins, so nothing later
+  // trusts the label over the bytes.
   return detected
 }
 

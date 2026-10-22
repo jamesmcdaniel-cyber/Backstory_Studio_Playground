@@ -3,10 +3,11 @@
  * (plain text, markdown, csv/tsv, json, yaml, xml, html, common source code)
  * decode directly; PDFs extract via unpdf (pure-JS pdf.js build, serverless-
  * safe); DOCX goes through the dependency-free reader in ./docx (ZIP entry +
- * WordprocessingML walk), which rejects corrupt/encrypted files outright.
+ * WordprocessingML walk → headings, lists, markdown tables, core metadata),
+ * which rejects corrupt/encrypted files outright.
  */
 
-import { extractDocxText, isDocx } from './docx'
+import { extractDocx, extractDocxText, isDocx, type DocxMetadata } from './docx'
 
 const CODE_EXT =
   /\.(md|markdown|txt|text|csv|tsv|json|jsonl|ya?ml|xml|html?|log|js|ts|tsx|jsx|py|rb|go|java|kt|c|cc|cpp|h|hpp|cs|php|rs|swift|sh|bash|sql|css|scss|less|toml|ini|env)$/i
@@ -46,13 +47,33 @@ const NULL_CHAR = String.fromCharCode(0)
  * everything else is the synchronous decode below.
  */
 export async function extractTextAuto(buffer: Buffer, mimeType: string, filename: string): Promise<string> {
+  return (await extractDocumentAuto(buffer, mimeType, filename)).text
+}
+
+/** Document properties a format carries alongside its text (DOCX core props today). */
+export type DocumentMetadata = DocxMetadata
+
+/**
+ * Text plus document metadata, for callers that keep both — knowledge
+ * ingestion records it on the document, flow file steps hand it downstream.
+ * Metadata is omitted (not `{}`) when the format has none to offer.
+ */
+export async function extractDocumentAuto(
+  buffer: Buffer,
+  mimeType: string,
+  filename: string,
+): Promise<{ text: string; metadata?: DocumentMetadata }> {
   if (isPdf(mimeType, filename)) {
     const { extractText: extractPdfText, getDocumentProxy } = await import('unpdf')
     const pdf = await getDocumentProxy(new Uint8Array(buffer))
     const { text } = await extractPdfText(pdf, { mergePages: true })
-    return text.split(NULL_CHAR).join('').replace(/\r\n/g, '\n').trim()
+    return { text: text.split(NULL_CHAR).join('').replace(/\r\n/g, '\n').trim() }
   }
-  return extractText(buffer, mimeType, filename)
+  if (isDocx(mimeType, filename)) {
+    const { text, metadata } = extractDocx(buffer)
+    return { text, ...(Object.keys(metadata).length ? { metadata } : {}) }
+  }
+  return { text: extractText(buffer, mimeType, filename) }
 }
 
 /** Decode a file's bytes to normalized text (stripping HTML markup when present). */

@@ -41,7 +41,7 @@ import { LEDGER_REPLAY_WARNING, readLedger, writeLedger } from '@/lib/flows/side
 import { subflowChildInput, subflowGuard } from '@/lib/flows/subflow'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { truncateWithMarker } from '@/lib/flows/truncate'
-import { extractTextAuto, isSupported } from '@/lib/knowledge/extract'
+import { extractDocumentAuto, isSupported, type DocumentMetadata } from '@/lib/knowledge/extract'
 import { retrieveKnowledge } from '@/lib/knowledge/retrieve'
 import { KNOWLEDGE_RELEVANCE_FLOOR } from '@/lib/rag/relevance'
 import { DEFAULT_AGENT_MODEL, DEFAULT_SUMMARY_MODEL, billableTokens, createModelRunner } from '@/lib/llm/model-runner'
@@ -757,6 +757,7 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
               const filename = httpDownloadFilename(response.headers.get('content-disposition'), request.url)
               const saved = await saveStoredFile({ organizationId: job.organizationId, userId: job.userId, filename, mimeType, buffer })
               let content: string | undefined
+              let metadata: DocumentMetadata | undefined
               if (isSupported(saved.mimeType, filename)) {
                 // Downloads DEGRADE, ingestion REJECTS: knowledge ingestion
                 // fails loudly on a file it cannot read (a partial document is
@@ -764,9 +765,11 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
                 // the bytes — which succeeded. A corrupt or password-protected
                 // DOCX/PDF therefore yields empty text instead of failing the
                 // step. Same treatment as the /api/files upload route.
-                content = truncateWithMarker(await extractTextAuto(buffer, saved.mimeType, filename).catch(() => ''), 200_000)
+                const extracted = await extractDocumentAuto(buffer, saved.mimeType, filename).catch(() => ({ text: '', metadata: undefined }))
+                content = truncateWithMarker(extracted.text, 200_000)
+                metadata = extracted.metadata
               }
-              return fileReference(saved, { content }) as unknown as Record<string, unknown>
+              return fileReference(saved, { content, metadata }) as unknown as Record<string, unknown>
             } catch (error) {
               if (timedOut) throw new Error(`HTTP request timed out after ${request.timeoutMs}ms`)
               throw error

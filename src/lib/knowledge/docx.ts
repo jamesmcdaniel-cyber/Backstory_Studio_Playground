@@ -1,10 +1,17 @@
 /**
- * DOCX → plain text, with no third-party parser: a .docx is a ZIP whose
- * `word/document.xml` holds the body in reading order. We read just that one
- * entry (central directory → local header → raw inflate via node:zlib) and walk
- * its XML for text runs, paragraph/line breaks, list markers, and table cells.
+ * DOCX → markdown-shaped text + core metadata, with no third-party parser: a
+ * .docx is a ZIP whose `word/document.xml` holds the body in reading order. We
+ * read that entry (central directory → local header → raw inflate via
+ * node:zlib), plus `word/styles.xml` (which styles are headings) and
+ * `docProps/core.xml` (title, author, dates) when present, and walk the XML for
+ * text runs, headings, paragraph/line breaks, list markers, and tables.
  *
- * Deliberately narrow: no styles, images, headers/footers, footnotes, or
+ * Why not mammoth: it pulls in a JSZip/xmldom/bluebird tree to produce HTML we
+ * would then have to turn back into text, and it does not read core metadata.
+ * This reader is ~400 lines, has no dependencies, and is bounded by the size
+ * caps below and DOCX_EXTRACT_TIME_LIMIT_MS.
+ *
+ * Deliberately narrow: no images, headers/footers, footnotes, or
  * tracked-change reconciliation (accepted text wins, deletions are dropped).
  * Anything we cannot read confidently throws DocxExtractionError so the caller
  * rejects the upload outright — never a silent partial extraction.
@@ -139,39 +146,128 @@ function safeCodePoint(code: number): string {
   }
 }
 
+
+/** Wall-clock budget for one document walk — a pathological XML part fails
+ *  cleanly instead of pinning the worker (the size caps above bound memory). */
+export const DOCX_EXTRACT_TIME_LIMIT_MS = 10_000
+
+/** A tag's `w:val` attribute, or undefined. */
+function attrVal(tag: string): string | undefined {
+  const match = /\bw:val="([^"]*)"/.exec(tag)
+  return match ? decodeEntities(match[1]) : undefined
+}
+
+/** Heading level a paragraph style id carries by Word's built-in naming. */
+function builtinHeadingLevel(styleId: string): number | undefined {
+  if (/^title$/i.test(styleId)) return 1
+  if (/^subtitle$/i.test(styleId)) return 2
+  const match = /^heading\s?([1-9])$/i.exec(styleId)
+  return match ? Math.min(6, Number(match[1])) : undefined
+}
+
+/**
+ * Paragraph style id → heading level, read from `word/styles.xml`. Style ids
+ * are localized (a German document's Heading 1 is `berschrift1`), but each
+ * style's `w:name` keeps the built-in English name ("heading 1") and an
+ * outline level, so both are consulted. Best-effort: no styles part, or one we
+ * cannot read, just means only the built-in ids are recognized.
+ */
+export function headingStylesFromXml(xml: string): Map<string, number> {
+  const levels = new Map<string, number>()
+  const styleRe = /<w:style\b([^>]*)>([\s\S]*?)<\/w:style>/g
+  let match: RegExpExecArray | null
+  while ((match = styleRe.exec(xml))) {
+    const attrs = match[1]
+    if (!/\bw:type="paragraph"/.test(attrs)) continue
+    const id = /\bw:styleId="([^"]*)"/.exec(attrs)?.[1]
+    if (!id) continue
+    const body = match[2]
+    const name = /<w:name\b[^>]*\bw:val="([^"]*)"/.exec(body)?.[1] ?? ''
+    const outline = /<w:outlineLvl\b[^>]*\bw:val="(\d+)"/.exec(body)?.[1]
+    const level =
+      builtinHeadingLevel(name.replace(/\s+/g, ' ').trim()) ??
+      (outline !== undefined && Number(outline) < 9 ? Math.min(6, Number(outline) + 1) : undefined)
+    if (level) levels.set(id, level)
+  }
+  return levels
+}
+
+/** One markdown table cell: pipes escaped, kept on one line. */
+function markdownCell(text: string): string {
+  return text.replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|').trim()
+}
+
+/** Rows → a GitHub-flavoured markdown table (first row is the header). */
+export function markdownTable(rows: string[][]): string[] {
+  const width = Math.max(0, ...rows.map((row) => row.length))
+  if (!width) return []
+  const pad = (row: string[]) => Array.from({ length: width }, (_unused, index) => markdownCell(row[index] ?? ''))
+  const [header, ...rest] = rows
+  return [
+    `| ${pad(header).join(' | ')} |`,
+    `| ${Array.from({ length: width }, () => '---').join(' | ')} |`,
+    ...rest.map((row) => `| ${pad(row).join(' | ')} |`),
+  ]
+}
+
+type TableState = { rows: string[][]; row: string[] | null }
+
 /**
  * Walk `word/document.xml` in document order. WordprocessingML is a flat,
  * well-ordered tag stream for our purposes, so a tokenizing scan (rather than a
  * DOM) keeps this dependency-free and linear in the document size.
  *
- * Structure preserved: one line per paragraph, "- " in front of numbered/
- * bulleted paragraphs, tab-separated cells per table row, tabs and manual line
- * breaks inside a paragraph. Tracked deletions (<w:del>) are dropped.
+ * Output is markdown-shaped plain text, because that is what both a reader and
+ * a retrieval index make best use of: one line per paragraph, `#`-prefixed
+ * headings (by built-in style, localized style name, or outline level), "- " in
+ * front of numbered/bulleted paragraphs, tables as markdown tables (a table
+ * nested in a cell is flattened into that cell), tabs and manual line breaks
+ * inside a paragraph. Tracked deletions (<w:del>) are dropped.
  */
-export function documentXmlToText(xml: string): string {
+export function documentXmlToText(
+  xml: string,
+  opts: { headingStyles?: Map<string, number>; deadline?: number } = {},
+): string {
+  const deadline = opts.deadline ?? Date.now() + DOCX_EXTRACT_TIME_LIMIT_MS
   const lines: string[] = []
-  /** Table nesting: each level collects the current row's finished cells. */
-  const rowStack: string[][] = []
+  const tables: TableState[] = []
   /** Paragraphs collected inside the innermost open <w:tc>. */
   const cellStack: string[][] = []
   let paragraph: string[] = []
   let paragraphIsListItem = false
+  let headingLevel: number | undefined
   let inDeleted = 0
   let inText = false
+  let inParagraphProps = false
 
   const flushParagraph = () => {
     const line = paragraph.join('').replace(/[ \t]+$/g, '')
     paragraph = []
-    const marked = paragraphIsListItem && line.trim() ? `- ${line.replace(/^\s+/, '')}` : line
+    const inCell = cellStack.length > 0
+    const isHeading = Boolean(headingLevel && line.trim() && !inCell)
+    let marked = line
+    if (isHeading) marked = `${'#'.repeat(headingLevel ?? 1)} ${line.trim()}`
+    // List markers do not survive inside a markdown table cell either.
+    else if (paragraphIsListItem && line.trim() && !inCell) marked = `- ${line.replace(/^\s+/, '')}`
     paragraphIsListItem = false
-    if (cellStack.length) cellStack[cellStack.length - 1].push(marked)
-    else lines.push(marked)
+    headingLevel = undefined
+    if (inCell) {
+      cellStack[cellStack.length - 1].push(marked)
+      return
+    }
+    // A heading reads as its own block in markdown.
+    if (isHeading && lines.length && lines[lines.length - 1] !== '') lines.push('')
+    lines.push(marked)
   }
 
   const tagRe = /<[^>]*>/g
   let match: RegExpExecArray | null
   let cursor = 0
+  let tags = 0
   while ((match = tagRe.exec(xml))) {
+    if ((++tags & 0x7ff) === 0 && Date.now() > deadline) {
+      throw new DocxExtractionError('That .docx took too long to read — it may be malformed. Re-save it from Word and try again.')
+    }
     if (inText && !inDeleted && match.index > cursor) {
       paragraph.push(decodeEntities(xml.slice(cursor, match.index)))
     }
@@ -193,14 +289,30 @@ export function documentXmlToText(xml: string): string {
         else inDeleted += 1
         break
       case 'w:tab':
-        if (!closing && !inDeleted) paragraph.push('\t')
+        // A <w:tab> inside paragraph properties is a tab STOP, not text.
+        if (!closing && !inDeleted && !inParagraphProps) paragraph.push('\t')
         break
       case 'w:br':
       case 'w:cr':
         if (!closing && !inDeleted) paragraph.push('\n')
         break
+      case 'w:pPr':
+        if (!selfClosing) inParagraphProps = !closing
+        break
       case 'w:numPr':
         if (!closing) paragraphIsListItem = true
+        break
+      case 'w:pStyle':
+        if (!closing) {
+          const styleId = attrVal(inner) ?? ''
+          headingLevel = opts.headingStyles?.get(styleId) ?? builtinHeadingLevel(styleId) ?? headingLevel
+        }
+        break
+      case 'w:outlineLvl':
+        if (!closing && inParagraphProps && headingLevel === undefined) {
+          const level = Number(attrVal(inner))
+          if (Number.isInteger(level) && level >= 0 && level < 9) headingLevel = Math.min(6, level + 1)
+        }
         break
       case 'w:p':
         if (selfClosing) break
@@ -208,32 +320,50 @@ export function documentXmlToText(xml: string): string {
         else {
           paragraph = []
           paragraphIsListItem = false
+          headingLevel = undefined
         }
         break
-      case 'w:tbl':
+      case 'w:tbl': {
         if (selfClosing) break
-        if (closing) rowStack.pop()
-        else rowStack.push([])
-        break
-      case 'w:tr':
-        if (selfClosing || !rowStack.length) break
-        if (closing) {
-          const cells = rowStack[rowStack.length - 1]
-          const row = cells.join('\t').replace(/[\t ]+$/g, '')
-          rowStack[rowStack.length - 1] = []
-          if (row.trim()) lines.push(row)
+        if (!closing) {
+          tables.push({ rows: [], row: null })
+          break
         }
-        break
-      case 'w:tc':
-        if (selfClosing) break
-        if (closing) {
-          const paragraphs = cellStack.pop() ?? []
-          const cell = paragraphs.map((entry) => entry.trim()).filter(Boolean).join(' ')
-          if (rowStack.length) rowStack[rowStack.length - 1].push(cell)
+        const table = tables.pop()
+        if (!table || !table.rows.length) break
+        if (cellStack.length) {
+          // Nested table: flatten it into the enclosing cell rather than break
+          // the outer markdown table.
+          cellStack[cellStack.length - 1].push(table.rows.map((row) => row.filter(Boolean).join(' / ')).join('; '))
         } else {
-          cellStack.push([])
+          if (lines.length && lines[lines.length - 1] !== '') lines.push('')
+          lines.push(...markdownTable(table.rows), '')
         }
         break
+      }
+      case 'w:tr': {
+        const table = tables[tables.length - 1]
+        if (selfClosing || !table) break
+        if (closing) {
+          if (table.row && table.row.some((cell) => cell.trim())) table.rows.push(table.row)
+          table.row = null
+        } else {
+          table.row = []
+        }
+        break
+      }
+      case 'w:tc': {
+        if (selfClosing) break
+        if (!closing) {
+          cellStack.push([])
+          break
+        }
+        const paragraphs = cellStack.pop() ?? []
+        const cell = paragraphs.map((entry) => entry.trim()).filter(Boolean).join(' ')
+        const table = tables[tables.length - 1]
+        if (table?.row) table.row.push(cell)
+        break
+      }
       default:
         break
     }
@@ -251,11 +381,68 @@ export function documentXmlToText(xml: string): string {
     .slice(0, MAX_TEXT_CHARS)
 }
 
+// ── Core metadata (docProps/core.xml) ──────────────────────────────────────
+
+/** Dublin Core / OPC core properties a Word file carries. All optional. */
+export type DocxMetadata = {
+  title?: string
+  subject?: string
+  author?: string
+  keywords?: string
+  description?: string
+  category?: string
+  lastModifiedBy?: string
+  revision?: string
+  created?: string
+  modified?: string
+}
+
+const CORE_FIELDS: Array<[keyof DocxMetadata, string]> = [
+  ['title', 'dc:title'],
+  ['subject', 'dc:subject'],
+  ['author', 'dc:creator'],
+  ['keywords', 'cp:keywords'],
+  ['description', 'dc:description'],
+  ['category', 'cp:category'],
+  ['lastModifiedBy', 'cp:lastModifiedBy'],
+  ['revision', 'cp:revision'],
+  ['created', 'dcterms:created'],
+  ['modified', 'dcterms:modified'],
+]
+
+/** Longest value kept per field — metadata is a label, not a second body. */
+const META_FIELD_MAX = 500
+
+export function coreMetadataFromXml(xml: string): DocxMetadata {
+  const out: DocxMetadata = {}
+  for (const [key, tag] of CORE_FIELDS) {
+    const match = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(xml)
+    const value = match ? decodeEntities(match[1].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim() : ''
+    if (value) out[key] = value.slice(0, META_FIELD_MAX)
+  }
+  return out
+}
+
+// ── Entry points ───────────────────────────────────────────────────────────
+
+/** Read one optional part; a missing or unreadable part is just absent. */
+function optionalPart(buffer: Buffer, entries: ZipEntry[], name: string): string | null {
+  const entry = entries.find((candidate) => candidate.name === name)
+  if (!entry) return null
+  try {
+    return readEntry(buffer, entry).toString('utf-8')
+  } catch {
+    return null
+  }
+}
+
 /**
- * Extract the body text of a .docx buffer. Throws DocxExtractionError with a
- * user-facing message when the file is not a readable, unencrypted DOCX.
+ * Extract the body text (markdown-shaped: headings, lists, tables) and the core
+ * metadata of a .docx buffer. Throws DocxExtractionError with a user-facing
+ * message when the file is not a readable, unencrypted DOCX.
  */
-export function extractDocxText(buffer: Buffer): string {
+export function extractDocx(buffer: Buffer, opts: { timeLimitMs?: number } = {}): { text: string; metadata: DocxMetadata } {
+  const deadline = Date.now() + (opts.timeLimitMs ?? DOCX_EXTRACT_TIME_LIMIT_MS)
   if (buffer.length < 22) throw new DocxExtractionError('That .docx file is empty or truncated.')
   // Encrypted OOXML is an OLE compound file, not a ZIP — detect it by magic.
   if (buffer.length >= 8 && buffer.readUInt32BE(0) === 0xd0cf11e0) {
@@ -273,5 +460,15 @@ export function extractDocxText(buffer: Buffer): string {
   if (!/<w:document[\s>]|<w:body[\s>]/.test(xml)) {
     throw new DocxExtractionError('That .docx document body could not be read — the file looks corrupt.')
   }
-  return documentXmlToText(xml)
+  const styles = optionalPart(buffer, entries, 'word/styles.xml')
+  const core = optionalPart(buffer, entries, 'docProps/core.xml')
+  return {
+    text: documentXmlToText(xml, { headingStyles: styles ? headingStylesFromXml(styles) : undefined, deadline }),
+    metadata: core ? coreMetadataFromXml(core) : {},
+  }
+}
+
+/** Body text only — see {@link extractDocx}. */
+export function extractDocxText(buffer: Buffer): string {
+  return extractDocx(buffer).text
 }

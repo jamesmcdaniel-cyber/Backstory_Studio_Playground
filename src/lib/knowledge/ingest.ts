@@ -3,7 +3,7 @@ import { prisma, tenantTransaction } from '@/lib/prisma'
 import { embedTexts, embeddingsConfigured, toSqlVector } from '@/lib/rag/embeddings'
 import { saveStoredFile, deleteStoredFile, readStoredFile, isDatasetFilename } from '@/lib/files/storage'
 import { profileDataset, datasetProfileText } from './dataset'
-import { extractTextAuto, chunkText, isSupported } from './extract'
+import { extractDocumentAuto, chunkText, isSupported, type DocumentMetadata } from './extract'
 import { deriveIndexState } from './index-state'
 import { DocxExtractionError } from './docx'
 
@@ -324,8 +324,11 @@ export async function ingestKnowledgeFile(params: {
     )
   }
   let raw: string
+  let documentMetadata: DocumentMetadata | undefined
   try {
-    raw = await extractTextAuto(params.buffer, params.mimeType, params.filename)
+    const extracted = await extractDocumentAuto(params.buffer, params.mimeType, params.filename)
+    raw = extracted.text
+    documentMetadata = extracted.metadata
   } catch (error) {
     if (error instanceof DocxExtractionError) throw new UnsupportedFileError(error.message)
     throw error
@@ -351,6 +354,9 @@ export async function ingestKnowledgeFile(params: {
     storedFileId: stored.id,
     assetType: 'file',
     sourceType: 'upload',
+    // A DOCX's core properties (title, author, dates) ride on the document so
+    // the Repository can show them; the indexed text stays the body alone.
+    ...(documentMetadata ? { sourceMetadata: { document: documentMetadata } } : {}),
   })
 }
 

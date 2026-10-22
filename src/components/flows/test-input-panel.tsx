@@ -37,7 +37,7 @@ export function inputForField({
       <div className="space-y-1">
         <input
           type="file"
-          accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.log,.pdf,text/*,application/json,application/pdf"
+          accept=".txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.log,.pdf,.docx,text/*,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           className={`${fieldClass} cursor-pointer file:mr-3 file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs file:font-medium`}
           onChange={(event) => {
             const file = event.target.files?.[0]

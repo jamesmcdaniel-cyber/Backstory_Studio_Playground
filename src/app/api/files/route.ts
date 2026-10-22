@@ -1,6 +1,6 @@
 import { withAuthenticatedApi, ApiError } from '@/lib/server/api-handler'
 import { saveStoredFile, STORED_FILE_MAX_BYTES } from '@/lib/files/storage'
-import { extractTextAuto, isSupported } from '@/lib/knowledge/extract'
+import { extractDocumentAuto, isSupported, type DocumentMetadata } from '@/lib/knowledge/extract'
 
 export const runtime = 'nodejs'
 
@@ -10,7 +10,7 @@ const CONTENT_PREVIEW_MAX_CHARS = 200_000
 
 // POST /api/files — store an uploaded file for this org (multipart, field
 // "file"). Returns the file id plus extracted text when the format supports
-// it (PDF included), so flow inputs can carry both the reference and the
+// it (PDF and DOCX included, with a DOCX's core properties), so flow inputs can carry both the reference and the
 // readable content.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const form = await request.formData().catch(() => null)
@@ -33,10 +33,13 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw new ApiError(error instanceof Error ? error.message : 'The file could not be stored.', 400, 'FILE_REJECTED')
   }
   let content: string | undefined
+  let metadata: DocumentMetadata | undefined
   if (isSupported(saved.mimeType, file.name)) {
-    content = (await extractTextAuto(buffer, saved.mimeType, file.name).catch(() => '')).slice(0, CONTENT_PREVIEW_MAX_CHARS) || undefined
+    const extracted = await extractDocumentAuto(buffer, saved.mimeType, file.name).catch(() => ({ text: '', metadata: undefined }))
+    content = extracted.text.slice(0, CONTENT_PREVIEW_MAX_CHARS) || undefined
+    metadata = extracted.metadata
   }
-  return { success: true, file: { ...saved, url: `/api/files/${saved.id}`, content } }
+  return { success: true, file: { ...saved, url: `/api/files/${saved.id}`, content, ...(metadata ? { metadata } : {}) } }
 // The wrapper's 1 MB default would reject legitimate uploads well under the
 // product's own 10 MB ceiling. Raised to that ceiling (plus multipart framing
 // slack) rather than switched off, so an upload still meets a limit before the

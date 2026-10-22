@@ -1907,6 +1907,8 @@ async function runAgentExecutionInner(
     if (renderTrigger !== 'artifact' && artifactModeApplies(renderTrigger, agent.objective, data.input) && !isDeliverable(summary)) {
       throw new Error('@artifact was requested, but the agent did not produce an executable artifact. Review the run and retry; no completed app is claimed.')
     }
+    // What the agent itself produced: saved instead when the rendered app will not save.
+    const draft = summary
     if (renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && !injectionTainted && needsArtifactRender(summary)) {
       const renderStep = await prisma.workflowStep.create({
         data: { executionId: execution.id, node: 'artifact.render', status: 'running', input: jsonValue({ model: ARTIFACT_RENDER_MODEL }), startedAt: new Date() },
@@ -1956,9 +1958,6 @@ async function runAgentExecutionInner(
     const blockedReason = blocking.length
       ? `Not delivered — ${blocking.map((entry) => `${entry.name}: ${entry.reason}`).join(' ')}`
       : failedWriteReason
-    // Degraded evidence rides on the output so a finished run stops reading as
-    // a clean success when the search behind it timed out.
-    const output = degraded.length ? { summary, degraded } : { summary }
     const triggerLink = (() => {
       const link = (execution.trigger as { link?: unknown } | null)?.link
       return typeof link === 'string' && link.startsWith('/') ? link : null
@@ -1998,23 +1997,44 @@ async function runAgentExecutionInner(
       ? null
       : await generateHeadline(summary, { organizationId, agentExecutionId: execution.id })
 
+    // Register before publishing terminal status: consumers stop polling a
+    // completed execution, so its artifact must already be addressable. A
+    // deliverable that will not save never fails the run (its email or Slack
+    // post already went out): the draft is saved instead of the rendered app,
+    // or the run completes with a warning saying it was not saved. A
+    // conversation about an artifact, or an ROI build, keeps its own
+    // best-effort registration (its chat says when no version was saved).
+    const register = (answer: string) => registerVersionFromExecution({
+      organizationId, userId, executionId: execution.id,
+      agentTaskId: agent.id, agentTitle: agentMetadata.title || agent.description,
+      trigger: execution.trigger, summary: answer, headline,
+    })
+    const publication = blockedReason
+      ? null
+      : await publishAgentDeliverable({
+          required: renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && isDeliverable(summary),
+          publish: () => register(summary),
+          ...(summary !== draft ? { draft: () => register(draft) } : {}),
+        })
+    // The answer kept is the one that was saved.
+    if (publication?.usedDraft) summary = draft
+    const artifactLink = publication?.published ? `/artifacts/${publication.published.artifactId}` : null
+    if (publication?.warning) {
+      apiLogger.warn('artifact publication degraded', { executionId: execution.id, warning: publication.warning })
+      degraded.push(publication.warning)
+      // Shown in the run's steps, beside the render that produced it.
+      const publishStep = await prisma.workflowStep.create({
+        data: { executionId: execution.id, node: 'artifact.publish', status: 'failed', error: publication.warning.slice(0, 2_000), startedAt: new Date(), completedAt: new Date() },
+      }).catch(() => null)
+      if (publishStep) await recordEvent(execution.id, publishStep.id, 'tool.failed', { name: 'artifact.publish', error: publication.warning.slice(0, 500) }).catch(() => undefined)
+    }
     await prisma.executionMessage.create({
       data: { executionId: execution.id, role: 'agent', content: summary },
     })
-    // Register before publishing terminal status: consumers stop polling a
-    // completed execution, so its artifact must already be addressable.
-    const artifactLink = blockedReason
-      ? null
-      : await publishAgentDeliverable(renderTrigger !== 'artifact' && renderTrigger !== 'roi_analysis' && isDeliverable(summary), () => registerVersionFromExecution({
-          organizationId, userId, executionId: execution.id,
-          agentTaskId: agent.id, agentTitle: agentMetadata.title || agent.description,
-          trigger: execution.trigger, summary, headline,
-        }))
-          .then((registered) => registered ? `/artifacts/${registered.artifactId}` : null)
-          .catch((error) => {
-            apiLogger.warn('artifact registration failed', { executionId: execution.id, error: error instanceof Error ? error.message : String(error) })
-            throw error
-          })
+    // Degraded evidence rides on the output so a finished run stops reading as
+    // a clean success when the search behind it timed out, or its deliverable
+    // was not saved as produced.
+    const output = degraded.length ? { summary, degraded } : { summary }
     // systemPrisma: id-keyed terminal writes on worker job data; execution/agent
     // ids were validated against this tenant when they were loaded/created above.
     await systemPrisma.$transaction([

@@ -13,6 +13,7 @@ import { assertPublicUrl, SsrfError } from '@/lib/net/ssrf'
 import { cacheDelete } from '@/lib/cache'
 import { recordAudit } from '@/lib/audit'
 import { safeMcpVerificationError, verifyStoredMcpConnection } from '@/lib/mcp/verify-connection'
+import { readToolPolicies } from '@/lib/mcp/tool-policy'
 
 // Mirror of execute-agent's toolDiscoveryCacheKey (org-scoped) — kept in sync
 // deliberately; busting it makes a connection edit take effect before the TTL.
@@ -68,9 +69,13 @@ function serializeConnection(conn: {
   isActive: boolean
   shareableWithCopilots: boolean
   lastVerifiedAt: Date | null
+  healthStatus?: string
+  lastError?: string | null
+  toolPolicies?: unknown
   createdAt: Date
   updatedAt: Date
 }) {
+  const policies = Object.values(readToolPolicies(conn.toolPolicies))
   return {
     id: conn.id,
     organizationId: conn.organizationId,
@@ -82,6 +87,15 @@ function serializeConnection(conn: {
     isActive: conn.isActive,
     shareableWithCopilots: conn.shareableWithCopilots,
     lastVerifiedAt: conn.lastVerifiedAt,
+    // What the health sweep last saw, so the list can show a broken server
+    // as needing a reconnect instead of as quietly "Enabled".
+    healthStatus: conn.healthStatus ?? 'unknown',
+    lastError: conn.lastError ?? null,
+    // How many tools are not plain "Always allow" (Integrations detail view).
+    toolPermissions: {
+      off: policies.filter((policy) => policy === 'off').length,
+      approve: policies.filter((policy) => policy === 'approve').length,
+    },
     createdAt: conn.createdAt,
     updatedAt: conn.updatedAt,
     auth: redactConfig(conn.authType, conn.authConfig),
@@ -182,7 +196,11 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
   const existing = await prisma.mcpConnection.findFirst({
     where: { id: body.id, organizationId: auth.organizationId },
   })
-  if (!existing) throw new ApiError('MCP connection not found', 404, 'NOT_FOUND')
+  // A personal connection is its owner's alone. Org scope was the only check
+  // here, so any integration manager could rewrite (or, below, delete) another
+  // member's own server and its credentials; it now reads as not found, the
+  // same answer GET gives for a row the caller cannot list.
+  if (!existing || (existing.userId && existing.userId !== auth.dbUser.id)) throw new ApiError('MCP connection not found', 404, 'NOT_FOUND')
   if (existing.provider) {
     throw new ApiError('This connection is managed by the platform and cannot be edited or deleted.', 403, 'PROVIDER_MANAGED')
   }
@@ -336,7 +354,8 @@ export const DELETE = withAuthenticatedApi(async (request, auth) => {
   const existing = await prisma.mcpConnection.findFirst({
     where: { id, organizationId: auth.organizationId },
   })
-  if (!existing) throw new ApiError('MCP connection not found', 404, 'NOT_FOUND')
+  // Same ownership rule as PUT: another member's personal row is not yours to remove.
+  if (!existing || (existing.userId && existing.userId !== auth.dbUser.id)) throw new ApiError('MCP connection not found', 404, 'NOT_FOUND')
   if (existing.provider) {
     throw new ApiError('This connection is managed by the platform and cannot be edited or deleted.', 403, 'PROVIDER_MANAGED')
   }

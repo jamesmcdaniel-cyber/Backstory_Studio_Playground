@@ -227,6 +227,8 @@ if (TEST_DB) {
     // 404s for an unknown connection id (no row, so no server is contacted) —
     // smoke only asserts < 500.
     { name: 'GET /api/mcp-connections/[id]/tools', run: async () => (await import('../mcp-connections/[id]/tools/route')).GET(req('/api/mcp-connections/nonexistent/tools')) },
+    // The Integrations detail view's variant: every tool plus its permission.
+    { name: 'GET /api/mcp-connections/[id]/tools?all=1', run: async () => (await import('../mcp-connections/[id]/tools/route')).GET(req('/api/mcp-connections/nonexistent/tools?all=1')) },
     { name: 'GET /api/mcp-connections/oauth/start', run: async () => (await import('../mcp-connections/oauth/start/route')).GET(req('/api/mcp-connections/oauth/start')) },
     { name: 'GET /api/organizations/members', run: async () => (await import('../organizations/members/route')).GET(req('/api/organizations/members')) },
     { name: 'GET /api/quarantine', run: async () => (await import('../quarantine/route')).GET(req('/api/quarantine')) },

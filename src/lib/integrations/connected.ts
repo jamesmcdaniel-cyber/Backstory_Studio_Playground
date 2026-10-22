@@ -5,7 +5,6 @@ import {
   BUILTIN_CONNECTORS,
   fromNangoProviderKey,
 } from '@/lib/connectors/registry'
-import { listWarehouseCredentialHosts } from '@/lib/warehouse/credentials'
 
 /**
  * Single source of "connected" across the org's integration planes.
@@ -60,7 +59,11 @@ export async function getAvailableIntegrations(organizationId: string): Promise<
     readPlanes(organizationId),
     granolaConfigured(organizationId),
     slackConfigured(organizationId),
-    listWarehouseCredentialHosts(organizationId).catch(() => ({ databricks: [], snowflake: [] })),
+    // Lazy: the credential resolver pulls in the flow and queue graph, which
+    // this light, widely imported module must not load as a side effect.
+    import('@/lib/warehouse/credentials')
+      .then(({ listWarehouseCredentialHosts }) => listWarehouseCredentialHosts(organizationId))
+      .catch(() => ({ databricks: [], snowflake: [] })),
   ])
 
   // Builtins whose availability is per-WORKSPACE (their own credential, or the

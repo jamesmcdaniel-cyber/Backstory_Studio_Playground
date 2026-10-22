@@ -1270,6 +1270,11 @@ model McpConnection {
   /// marked as safe to hand to anyone holding a shared link (demo data). Off
   /// for every connection unless someone turns it on.
   shareableWithCopilots Boolean @default(false)
+  /// Per-tool permission, set from the server's detail view in Integrations:
+  /// toolName → 'approve' | 'off'. A tool that is absent is ALLOWED, so a
+  /// tool the server adds later is usable by default. Policy, not config: it
+  /// never feeds toolSchemaHash, which stays over the full server tool list.
+  toolPolicies   Json      @default("{}")
   lastVerifiedAt DateTime?
   healthStatus   String    @default("unknown") // unknown | healthy | unhealthy | schema_changed
   lastError      String?   @db.Text

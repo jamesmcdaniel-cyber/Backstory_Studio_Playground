@@ -14,7 +14,7 @@ import { deadLetterFromFlowJob, isDeterministicUserFailure, type FlowDeadLetterD
  */
 
 const jobLike = (data: Record<string, unknown> = {}) =>
-  ({ id: '7', name: 'execute-flow', data }) as never
+  ({ id: '7', name: 'execute-flow', data, attemptsMade: 1, opts: { attempts: 1 } }) as never
 
 function harness() {
   const parked: unknown[] = []

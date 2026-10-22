@@ -5,9 +5,9 @@ import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 export const QUEUE_NAMES = {
   AGENT_EXECUTION: 'agent-execution',
   SCHEDULED_AGENT_EXECUTION: 'scheduled-agent-execution',
-  // Poison jobs land here after their single attempt fails, so a failed run is
+  // Poison jobs land here after their FINAL attempt fails, so a failed run is
   // durably inspectable (and re-runnable by an operator) instead of vanishing.
-  // We do NOT auto-retry: agent runs have external side effects.
+  // Deterministic refusals never land here — see dead-letter.ts.
   DEAD_LETTER: 'agent-dead-letter',
   FLOW_EXECUTION: 'flow-execution',
   FLOW_DEAD_LETTER: 'flow-dead-letter',

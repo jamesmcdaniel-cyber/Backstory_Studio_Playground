@@ -13,6 +13,7 @@ import { systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
 import { captureError } from '@/lib/observability/sentry'
 import { createQueue, QUEUE_NAMES } from './config'
+import { isFinalAttempt } from './dead-letter'
 
 export interface FlowDeadLetterInput {
   queue: string
@@ -202,6 +203,10 @@ export function isDeterministicUserFailure(error: unknown): boolean {
 export function deadLetterFromFlowJob(queueName: string, deps?: FlowDeadLetterDeps) {
   return (job: Job | undefined, error: Error) => {
     if (!job) return
+    // Resume jobs keep the queue default of two attempts (queue-options.ts),
+    // and BullMQ emits `failed` after each one. Only the last is a dead
+    // letter; the retry re-claims the run and either recovers or lands here.
+    if (!isFinalAttempt(job)) return
     const input = flowDeadLetterInputFromJob(queueName, job, error)
     const resolved = deps ?? defaultDeps()
     if (isDeterministicUserFailure(error)) {

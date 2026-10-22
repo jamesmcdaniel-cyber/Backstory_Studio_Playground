@@ -50,18 +50,18 @@ function logRecorder() {
   return {
     errors,
     captured,
-    logger: { error: (message: string, meta: any) => { errors.push({ message, meta }) } } as never,
+    logger: { error: (message: string, meta: any) => { errors.push({ message, meta }) }, warn: () => {} } as never,
     capture: ((error: unknown, context: any) => { captured.push({ error, context }) }) as never,
   }
 }
 
 describe('agent dead-letter', () => {
-  function harness(update: (args: any) => Promise<unknown> = async () => ({})) {
+  function harness(update: (args: any) => Promise<unknown> = async () => ({ count: 1 })) {
     const queues = queueRecorder()
     const logs = logRecorder()
     const updates: any[] = []
     const deps: DeadLetterDeps = {
-      db: { agentExecution: { update: (args) => { updates.push(args); return update(args) } } },
+      db: { agentExecution: { updateMany: (args) => { updates.push(args); return update(args) } } },
       createQueue: queues.createQueue,
       logger: logs.logger,
       capture: logs.capture,
@@ -85,7 +85,7 @@ describe('agent dead-letter', () => {
     await recordDeadLetter(input, deps)
 
     assert.equal(updates.length, 1)
-    assert.deepEqual(updates[0].where, { id: 'exec-1' })
+    assert.deepEqual(updates[0].where, { id: 'exec-1', status: { in: ['pending', 'running'] } })
     assert.equal(updates[0].data.status, 'failed')
     assert.equal(updates[0].data.error, 'boom')
     assert.ok(updates[0].data.completedAt instanceof Date)
@@ -134,7 +134,7 @@ describe('agent dead-letter', () => {
   test('a DLQ enqueue failure is logged and never thrown at the worker', async () => {
     const logs = logRecorder()
     const deps: DeadLetterDeps = {
-      db: { agentExecution: { update: async () => ({}) } },
+      db: { agentExecution: { updateMany: async () => ({ count: 1 }) } },
       createQueue: (() => { throw new Error('redis gone') }) as never,
       logger: logs.logger,
       capture: logs.capture,

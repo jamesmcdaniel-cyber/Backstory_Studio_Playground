@@ -34,6 +34,7 @@ import {
 } from './tool-planes'
 import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
 import { applyPublishedDefinition, pinnedConnectorKeys } from '@/lib/agents/publish'
+import { AgentRunRefusedError } from '@/lib/agents/run-errors'
 import { mcpAllowedToolNames, parseAgentToolSettings, scopeDescriptionSuffix, toolScopeViolation, type AgentToolSettings } from '@/lib/connectors/tool-quick-config'
 import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { agentVisibilityScope } from '@/lib/server/visibility'
@@ -731,7 +732,7 @@ async function runAgentExecutionInner(
   const agentRow = await prisma.agentTask.findFirst({
     where: { id: agentId, organizationId, status: 'ACTIVE' },
   })
-  if (!agentRow) throw new Error('Agent not found or inactive')
+  if (!agentRow) throw new AgentRunRefusedError('Agent not found or inactive', 'AGENT_UNAVAILABLE')
   const templateCopy = Boolean(agentRow.artifactTemplateCopyId)
   if (templateCopy) {
     // A hidden copilot is not a general-purpose agent. Alternate APIs, flows,
@@ -740,7 +741,7 @@ async function runAgentExecutionInner(
     const trigger = queued?.trigger as { type?: string; artifactId?: string } | null
     // A guest copy has no owner: its copilot runs as the host it was made under.
     const copy = await prisma.artifact.findFirst({ where: { id: agentRow.artifactTemplateCopyId!, organizationId, agentTaskId: agentId, templateSourceId: { not: null }, OR: [{ userId }, { userId: null, guestDigest: { not: null } }] }, select: { id: true } })
-    if (agentRow.userId !== userId || !copy || trigger?.type !== 'artifact' || trigger.artifactId !== copy.id) throw new Error('This copilot can only run from its own template copy.')
+    if (agentRow.userId !== userId || !copy || trigger?.type !== 'artifact' || trigger.artifactId !== copy.id) throw new AgentRunRefusedError('This copilot can only run from its own template copy.', 'TEMPLATE_COPY_GUARD')
     data = { ...data, stepOverrides: undefined }
   }
   // A published agent runs its PUBLISHED definition, so editing it does not
@@ -798,10 +799,10 @@ async function runAgentExecutionInner(
         },
       })
     : null
-  if (data.executionId && !queuedExecution) throw new Error('Queued execution does not match this tenant and agent')
+  if (data.executionId && !queuedExecution) throw new AgentRunRefusedError('Queued execution does not match this tenant and agent', 'EXECUTION_MISMATCH')
 
   const resuming = Boolean(data.resume)
-  if (resuming && !queuedExecution) throw new Error('Resume requested without an execution')
+  if (resuming && !queuedExecution) throw new AgentRunRefusedError('Resume requested without an execution', 'RESUME_WITHOUT_EXECUTION')
 
   // A re-delivered execution: skip terminal/waiting ones, but RESUME a run that
   // was interrupted mid-flight (status 'running' with a checkpointed transcript)
@@ -828,7 +829,7 @@ async function runAgentExecutionInner(
     const pending = executionMetadata.pendingQuestion as PendingQuestion | undefined
     const waiting = queuedExecution.status === 'waiting_for_input' || queuedExecution.status === 'waiting_for_approval'
     if (!waiting || !pending || !Array.isArray(queuedExecution.transcript)) {
-      throw new Error('Execution is not waiting for input or approval')
+      throw new AgentRunRefusedError('Execution is not waiting for input or approval', 'NOT_AWAITING_REPLY')
     }
     // Atomic claim (same pattern as approval decide): two concurrent replies —
     // e.g. builder and Activity page both open — must not both resume. Exactly
@@ -840,7 +841,7 @@ async function runAgentExecutionInner(
       data: { status: 'running' },
     })
     if (claimed.count === 0) {
-      throw new Error('Execution is not waiting for input or approval')
+      throw new AgentRunRefusedError('Execution is not waiting for input or approval', 'NOT_AWAITING_REPLY')
     }
     // Normalize to the provider-neutral IR so a run persisted in a native shape
     // (pre-IR, or by the other provider) resumes on whatever provider routes now.
@@ -993,8 +994,9 @@ async function runAgentExecutionInner(
     // The run's owner is passed so exempt admin accounts are never blocked.
     const budget = await checkMonthlyTokenBudget(organizationId, userId)
     if (budget.over) {
-      throw new Error(
+      throw new AgentRunRefusedError(
         `Monthly token budget reached for this workspace (${budget.used.toLocaleString()}/${budget.limit.toLocaleString()} tokens). Raise AGENT_MONTHLY_TOKEN_LIMIT or wait for the next cycle.`,
+        'MONTHLY_BUDGET',
       )
     }
 
@@ -1041,7 +1043,7 @@ async function runAgentExecutionInner(
       const trigger = (execution.trigger ?? {}) as { type?: unknown; artifactId?: unknown; artifactRequest?: unknown; artifactToolQuery?: unknown; artifactBaseVersionId?: unknown }
       if (trigger.type !== 'artifact' || typeof trigger.artifactId !== 'string') return undefined
       const target = await prisma.artifact.findFirst({ where: { id: trigger.artifactId, organizationId }, select: { id: true, kind: true, templateSourceId: true, userId: true, guestDigest: true, agentTaskId: true } })
-      if (target?.templateSourceId && (!templateCopy || !templateCopyRunsAs(target, userId) || target.agentTaskId !== agent.id)) throw new Error('Template copy access denied.')
+      if (target?.templateSourceId && (!templateCopy || !templateCopyRunsAs(target, userId) || target.agentTaskId !== agent.id)) throw new AgentRunRefusedError('Template copy access denied.', 'TEMPLATE_COPY_GUARD')
       return target ? { artifactId: target.id, kind: target.kind, templateCopy, ...(templateCopy ? { guestCopy: Boolean(target.guestDigest) } : {}), executionId: execution.id, request: typeof trigger.artifactRequest === 'string' ? trigger.artifactRequest : null, toolQuery: typeof trigger.artifactToolQuery === 'string' ? trigger.artifactToolQuery : null, ...(typeof trigger.artifactBaseVersionId === 'string' ? { expectedVersionId: trigger.artifactBaseVersionId } : {}) } : undefined
     })()
     const policy = data.stepOverrides?.toolPolicy

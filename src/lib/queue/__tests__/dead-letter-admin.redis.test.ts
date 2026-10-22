@@ -66,9 +66,9 @@ describe('dead-letter admin against live Redis', () => {
         error: 'live round-trip',
       },
       {
-        db: { agentExecution: { update: async () => ({}) } },
+        db: { agentExecution: { updateMany: async () => ({ count: 1 }) } },
         createQueue,
-        logger: { error: () => {} } as never,
+        logger: { error: () => {}, warn: () => {} } as never,
         capture: (() => {}) as never,
       },
     )

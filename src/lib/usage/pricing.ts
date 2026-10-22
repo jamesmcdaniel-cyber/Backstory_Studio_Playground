@@ -15,7 +15,7 @@
  */
 import type { TokenUsage } from '@/lib/llm/model-runner'
 
-export const PRICE_VERSION = '2026-08-03'
+export const PRICE_VERSION = '2026-10-22'
 
 type Rates = {
   /** Fresh (uncached) input tokens. */
@@ -25,39 +25,36 @@ type Rates = {
   /** Cache reads — ~0.1x input. */
   cacheRead: number
   output: number
+  /** Rates for a prompt over `overTokens` (input + cache reads + writes), where published. */
+  longPrompt?: { overTokens: number; rates: Rates }
 }
 
-/** Build a rate row from the two published numbers. */
-function rates(input: number, output: number): Rates {
-  return { input, cacheWrite: input * 1.25, cacheRead: input * 0.1, output }
+/** Build a rate row from the published numbers; cache reads default to 0.1x input. */
+function rates(input: number, output: number, cacheRead = input * 0.1): Rates {
+  return { input, cacheWrite: input * 1.25, cacheRead, output }
 }
 
 const PER_MILLION: Record<string, Rates> = {
   // Anthropic first-party rates.
-  'anthropic:claude-fable-5-1': rates(10, 50),
+  // Fable 5.1 and Opus 5.5 publish cache reads below the usual 0.1x.
+  'anthropic:claude-fable-5-1': rates(10, 50, 0.25),
   'anthropic:claude-fable-5': rates(10, 50),
   'anthropic:claude-mythos-5-1': rates(10, 50),
   'anthropic:claude-mythos-5': rates(10, 50),
   // Opus 5.5 is cheaper than Opus 5; without its own row the prefix match
   // would price it at Opus 5 rates (25% high).
-  'anthropic:claude-opus-5-5': rates(4, 20),
+  'anthropic:claude-opus-5-5': rates(4, 20, 0.2),
   'anthropic:claude-opus-5': rates(5, 25),
   'anthropic:claude-opus-4-8': rates(5, 25),
   'anthropic:claude-opus-4-7': rates(5, 25),
   'anthropic:claude-opus-4-6': rates(5, 25),
-  // Sonnet 5 carries an introductory rate of $2/$10 per MTok through
-  // 2026-08-31. We deliberately encode the STANDARD $3/$15 instead: this table
-  // is a static constant that may go months without review, and a rate that
-  // silently becomes 33% too low on 2026-09-01 is worse for an ops dashboard
-  // than one that runs slightly high for a few weeks. Overstating spend is the
-  // safe direction here.
-  // Sonnet 5.5 ships at $2/$10 (its standing price, not an introductory one).
+  // Sonnet 5's published price after its introductory period is $2/$10 (the
+  // sheet as of 2026-10). Sonnet 5.5 ships at the same.
   'anthropic:claude-sonnet-5-5': rates(2, 10),
-  'anthropic:claude-sonnet-5': rates(3, 15),
+  'anthropic:claude-sonnet-5': rates(2, 10),
   'anthropic:claude-sonnet-4-6': rates(3, 15),
-  // Haiku 5.5 is served on the production key; Anthropic has not published
-  // its price sheet yet, so it carries Haiku 4.5's rates until it does.
-  'anthropic:claude-haiku-5-5': rates(1, 5),
+  // Haiku 5.5: $0.10/$0.50 up to a 100K-token prompt, $0.50/$2.50 beyond.
+  'anthropic:claude-haiku-5-5': { ...rates(0.1, 0.5), longPrompt: { overTokens: 100_000, rates: rates(0.5, 2.5) } },
   'anthropic:claude-haiku-4-5': rates(1, 5),
 
   // Voyage embeddings (input only — embeddings produce no output tokens).
@@ -98,8 +95,10 @@ export function computeCostUsd(
   model: string,
   usage: TokenUsage,
 ): { costUsd: number; priceVersion: string } {
-  const rate = ratesFor(provider, model)
-  if (!rate) return { costUsd: 0, priceVersion: 'unknown' }
+  const row = ratesFor(provider, model)
+  if (!row) return { costUsd: 0, priceVersion: 'unknown' }
+  const promptTokens = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
+  const rate = row.longPrompt && promptTokens > row.longPrompt.overTokens ? row.longPrompt.rates : row
 
   const raw =
     (usage.inputTokens * rate.input +

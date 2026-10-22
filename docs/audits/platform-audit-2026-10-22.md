@@ -28,6 +28,7 @@ Scope:
 | `roi_load_extract` followed redirects with a saved credential attached. | A bearer, basic or API-key credential could reach another host. | 1c534c51 |
 | Pricing table. | Haiku 5.5 was costed 10x high, Sonnet 5 1.5x high, and Opus 5.5 and Fable 5.1 cache reads were wrong. | 5d390649 |
 | `@prisma/client` 6.14 ran with the 6.19 CLI. | A known source of runtime failures. | 0fb0aff3 |
+| next 15.5.27 and @sentry/nextjs 10.63 (advisories published during the audit). | Critical: unauthenticated RCE through the Image Optimization API with SVG, a Server Actions DoS, and a Sentry tunnel middleware bypass. | ec8561a8: next 15.5.28, @sentry/nextjs 10.76 |
 
 Also fixed: model streams with no end-to-end deadline (e9a7f272); a chat run badge stuck on "running" in queue mode (a079bb94); a slow first state load making a page read-only (f0d72185); the artifact chat spinning on deleted or awaiting-approval runs (2e0d19d7); onclick-only pages with dead buttons (8a205707).
 
@@ -38,7 +39,7 @@ Also fixed: model streams with no end-to-end deadline (e9a7f272); a chat run bad
 
 ## Verification
 
-Each merge passed typecheck, lint, the migration drift check, and the full CI-mode suite on a fresh database (Postgres + Redis). The last run before this document: 5,129 pass, 0 fail, 7 skipped, plus a clean `next build`. Production `/api/health` is ok after each deploy.
+Each merge passed typecheck, lint, the migration drift check, and the full CI-mode suite on a fresh database (Postgres + Redis). The last run before this document: 5,129 pass, 0 fail, 7 skipped, plus a clean `next build`. GitHub CI on main is green again from ec8561a8 (check, rls, migrations). Browser E2E's authenticated journeys still fail at their secrets check: the E2E_* repository secrets are not set. Production `/api/health` is ok after each deploy.
 
 ## Needs an owner
 

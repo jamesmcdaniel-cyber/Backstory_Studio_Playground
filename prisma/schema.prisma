@@ -1003,6 +1003,10 @@ model AgentExecution {
   userId           String
   organizationId   String    @db.Uuid
   startedAt        DateTime  @default(now())
+  /// Liveness clock: stamped about once a minute while the run's process is
+  /// alive (src/lib/agents/liveness.ts). The stuck-run reaper keys on this,
+  /// not on startedAt, so a long healthy run is never failed for its age.
+  lastActiveAt     DateTime?
   completedAt      DateTime?
 
   user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)

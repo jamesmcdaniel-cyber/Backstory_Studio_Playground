@@ -37,7 +37,7 @@ import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
 import { isDue, dueOccurrence, type AgentSchedule } from '@/lib/scheduling/due'
 import { workersEnabled } from '@/lib/queue/config'
 import { EXECUTION_MODE } from '@/lib/queue/execution-mode'
-import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
+import { reapStuckAgentExecutions } from '@/lib/agents/reap'
 import { reapStuckFlowRuns, reapNeverPickedUpRuns } from '@/lib/flows/reap'
 import { sweepTemplateGeneration } from '@/lib/templates/generation-queue'
 import { blocksSchedule } from '@/lib/flows/schedule-blocking'
@@ -62,7 +62,6 @@ const MAX_AGENTS_PER_TICK = Math.max(1, Number(process.env.AGENT_DISPATCH_PER_TI
 // first, with no signal). Raised default + env override + a saturation warning
 // (below) so hitting the cap is visible instead of silent truncation.
 const MAX_FLOWS_PER_TICK = Math.max(1, Number(process.env.FLOW_DISPATCH_PER_TICK) || 50)
-const STUCK_RUN_TIMEOUT_MS = AGENT_RUN_TIMEOUT_MS
 const MAX_ERROR_LENGTH = 300
 
 /**
@@ -222,15 +221,6 @@ export async function runDispatchTick(
       apiLogger.error('cron/dispatch: outbox processing failed', { error: capError(error) })
       return { delivered: 0, retried: 0, failed: 0 }
     })
-    // I5 — reap stuck runs: any execution still "running" past the time limit
-    // is marked failed so it doesn't pin resources or block reporting.
-    // systemPrisma: global reaper sweep — runs across all orgs by design (CRON_SECRET-gated).
-    // Reap 'running' AND the two other non-terminal states a killed process can
-    // strand: 'cancelling' (user hit cancel, then the process died — the run is
-    // un-cancellable and un-deletable, since neither predicate treats it as
-    // cancellable or terminal) and 'pending' (queued but never claimed by a
-    // worker). All three carry a `startedAt` (defaults to now()), so the age
-    // filter applies uniformly. A stranded cancel resolves to 'cancelled'.
     // Credential-use anomalies. A leaked credential keeps working — that is the
     // whole problem — so what changes is the PATTERN of use, not the credential.
     // Runs here rather than inline at credential-read time: detecting inline
@@ -241,15 +231,11 @@ export async function runDispatchTick(
       return { organizations: 0, anomalies: 0 }
     })
 
-    const stranded = new Date(Date.now() - STUCK_RUN_TIMEOUT_MS)
-    await systemPrisma.agentExecution.updateMany({
-      where: { status: { in: ['running', 'pending'] }, startedAt: { lt: stranded } },
-      data: { status: 'failed', error: 'Run exceeded time limit', completedAt: new Date() },
-    })
-    await systemPrisma.agentExecution.updateMany({
-      where: { status: 'cancelling', startedAt: { lt: stranded } },
-      data: { status: 'cancelled', error: 'Cancelled (run did not stop in time)', completedAt: new Date() },
-    })
+    // I5 — reap stuck agent runs (and resolve stranded cancels) so they don't
+    // pin resources or block reporting. Liveness-keyed: a run is failed when
+    // its process stops beating, not when it gets old — see
+    // src/lib/agents/reap.ts.
+    await reapStuckAgentExecutions()
 
     // Same recovery for flows: a crashed inline flow execution leaves its run
     // `running` forever, which also wedges that flow's schedule via the

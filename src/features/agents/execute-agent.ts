@@ -35,6 +35,7 @@ import {
 import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
 import { applyPublishedDefinition, pinnedConnectorKeys } from '@/lib/agents/publish'
 import { AgentRunRefusedError } from '@/lib/agents/run-errors'
+import { startExecutionHeartbeat } from '@/lib/agents/liveness'
 import { mcpAllowedToolNames, parseAgentToolSettings, scopeDescriptionSuffix, toolScopeViolation, type AgentToolSettings } from '@/lib/connectors/tool-quick-config'
 import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { agentVisibilityScope } from '@/lib/server/visibility'
@@ -718,7 +719,21 @@ export async function runAgentExecution(
       'backstory.agent.resume': Boolean(data.resume),
       'backstory.agent.depth': data.depth ?? 0,
     },
-    () => ambientOrganization.run(data.organizationId, () => runAgentExecutionInner(data)),
+    () => ambientOrganization.run(data.organizationId, async () => {
+      // Liveness for the stuck-run reaper (src/lib/agents/reap.ts): beats from
+      // the moment the execution row is claimed or created until the run
+      // settles, so a long healthy run is never mistaken for a dead one.
+      const heartbeat = startExecutionHeartbeat(data.organizationId)
+      const onExecutionCreated = (executionId: string) => {
+        heartbeat.track(executionId)
+        return data.onExecutionCreated?.(executionId)
+      }
+      try {
+        return await runAgentExecutionInner({ ...data, onExecutionCreated })
+      } finally {
+        heartbeat.stop()
+      }
+    }),
   )
 }
 
@@ -890,8 +905,10 @@ async function runAgentExecutionInner(
           status: 'running',
           model: runner.model,
           // Refresh startedAt on resume too (not only on a fresh run) — the
-          // agent reaper fails any `running` execution older than 30 min, so a
-          // long-after-question resume would otherwise be false-failed mid-run.
+          // agent reaper (src/lib/agents/reap.ts) spares a run until 10 min
+          // past startedAt while its first new heartbeat lands, and its
+          // 2-hour ceiling counts from here, so a long-after-question resume
+          // would otherwise be false-failed mid-run.
           // (Mirrors the flow resume's startedAt refresh.)
           startedAt: new Date(),
           ...(resuming

@@ -1,9 +1,11 @@
 // 30 minutes — matched to the inline routes' Vercel extended max duration
 // (maxDuration = 1800), so an inline run and a queued run get the same budget.
 // Everything times off this one constant: the BullMQ lockDuration, the
-// stuck-execution reaper, and the flow AI-step timeout ceiling — raising it
-// requires a `fly deploy --config fly.worker.toml` so the worker's lock and
-// the reaper agree with the web tier.
+// stuck-execution reaper's rule for runs that never heartbeat (pending rows,
+// and rows from before the liveness clock — see src/lib/agents/reap.ts), and
+// the flow AI-step timeout ceiling — raising it requires a
+// `fly deploy --config fly.worker.toml` so the worker's lock and the reaper
+// agree with the web tier.
 export const AGENT_RUN_MAX_DURATION_SECONDS = 30 * 60
 export const AGENT_RUN_TIMEOUT_MS = AGENT_RUN_MAX_DURATION_SECONDS * 1000
 

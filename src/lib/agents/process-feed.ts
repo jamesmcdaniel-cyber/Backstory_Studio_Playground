@@ -35,6 +35,22 @@ export type TimelineItem =
   | { key: string; ts: number; kind: 'plan'; text: string }
   | { key: string; ts: number; kind: 'memory'; summary: string }
   | { key: string; ts: number; kind: 'autoanswer'; question: string; answer: string }
+  /** An external agent's run: delivery, its own progress lines, its reply. */
+  | { key: string; ts: number; kind: 'external'; text: string; from: 'agent' | 'platform' }
+
+/** How an external agent's run events read in the feed. */
+export function externalEventText(kind: string, payload: any): { text: string; from: 'agent' | 'platform' } | null {
+  const host = typeof payload?.host === 'string' ? payload.host : 'the external agent'
+  switch (kind) {
+    case 'external.dispatched': return { text: `Sending the task to ${host}`, from: 'platform' }
+    case 'external.delivered': return { text: `${host} received the task`, from: 'platform' }
+    case 'external.delivery_retry': return { text: `${host} answered HTTP ${payload?.status ?? '?'} — will retry`, from: 'platform' }
+    case 'external.delivery_failed': return { text: `Could not deliver the task: ${String(payload?.reason ?? 'unknown error')}`, from: 'platform' }
+    case 'external.progress': return typeof payload?.text === 'string' ? { text: payload.text, from: 'agent' } : null
+    case 'external.replied': return { text: payload?.status === 'failed' ? 'The agent reported it could not finish' : 'Reply received', from: 'agent' }
+    default: return null
+  }
+}
 
 export function buildProcessTimeline(
   events: ProcessEvent[],
@@ -43,6 +59,8 @@ export function buildProcessTimeline(
   const items: TimelineItem[] = []
   const suggestionsById = new Map<string, SuggestionItem>()
   for (const event of events ?? []) {
+    const external = event.kind.startsWith('external.') ? externalEventText(event.kind, event.payload) : null
+    if (external) items.push({ key: `x-${event.id}`, ts: new Date(event.ts).getTime(), kind: 'external', ...external })
     if (event.kind === 'agent.thinking' && event.payload?.text) {
       items.push({ key: `t-${event.id}`, ts: new Date(event.ts).getTime(), kind: 'thinking', text: String(event.payload.text) })
     }
@@ -186,6 +204,8 @@ export function feedLabel(item: TimelineItem): string {
       return `Recalled from memory — ${snippet(item.summary)}`
     case 'autoanswer':
       return 'Answered a question from memory'
+    case 'external':
+      return snippet(item.text)
     case 'tool':
       return toolLabel(item.step)
   }

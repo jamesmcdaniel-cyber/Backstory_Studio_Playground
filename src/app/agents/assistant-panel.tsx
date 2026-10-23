@@ -16,6 +16,8 @@ import { ModelPicker, useChatModel } from '@/components/ui/model-picker'
 import { postStreaming } from '@/lib/client/stream'
 import { notifyAgentsChanged } from '@/components/layout/sidebar'
 import { cn } from '@/lib/utils'
+import { isTerminalRunStatus } from '@/lib/agents/run-status'
+import { startVisibleInterval } from '@/lib/client/visible-interval'
 import type { Agent } from '@/lib/types'
 
 /**
@@ -442,9 +444,28 @@ export function AssistantPanel({
     }
   }
 
+  // An external agent answers on its own time: while one of its tasks in this
+  // thread is unfinished, re-read the thread so the reply appears when it lands.
+  const external = agent?.agentType === 'external'
+  const awaitingExternalReply = external && Boolean(sessionId) && messages.some((message) => message.run && !isTerminalRunStatus(String(message.run.status)))
+  useEffect(() => {
+    if (!awaitingExternalReply || !agentId || !sessionId) return
+    const targetAgentId = agentId
+    return startVisibleInterval(() => {
+      void fetch(`/api/agents/${targetAgentId}/chat?sessionId=${encodeURIComponent(sessionId)}`, { cache: 'no-store' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (agentIdRef.current !== targetAgentId || !Array.isArray(data?.messages)) return
+          setMessages(data.messages)
+        })
+        .catch(() => undefined)
+    }, 5_000)
+  }, [awaitingExternalReply, agentId, sessionId])
+
   // Task-oriented starters that reflect what these agents do (run it, research,
-  // briefing) plus quick config — not just "what did the last run do".
-  const suggestions: Array<{ text: string; kind: 'action' | 'question' }> = agent
+  // briefing) plus quick config — not just "what did the last run do". An
+  // external agent has no configuration to talk about: the message is the task.
+  const suggestions: Array<{ text: string; kind: 'action' | 'question' }> = agent && !external
     ? [
         { text: 'Run this agent now', kind: 'action' },
         { text: 'Change the schedule to run daily at 9am', kind: 'action' },
@@ -549,7 +570,9 @@ export function AssistantPanel({
             <div className="w-full max-w-sm text-center">
               <MessageSquare className="mx-auto h-6 w-6 text-gray-300" />
               <p className="mt-2 text-sm text-gray-500">
-                Backstory grounds answers in this agent&apos;s configuration and recent runs — and runs the agent for you when you ask.
+                {external
+                  ? `What you send here goes straight to ${agent.title}, which runs outside Backstory and sees only your message. Its reply appears in this thread.`
+                  : 'Backstory grounds answers in this agent\u2019s configuration and recent runs — and runs the agent for you when you ask.'}
               </p>
               <div className="mt-4 space-y-4 text-left">
                 {(['action', 'question'] as const).map((kind) => {
@@ -631,6 +654,11 @@ export function AssistantPanel({
                     {(message.run.status === 'waiting_for_input' || message.run.status === 'waiting_for_approval') && (
                       <span className="text-amber-600">— waiting</span>
                     )}
+                    {message.run.status === 'waiting_for_external' && (
+                      <span className="inline-flex items-center gap-1 text-gray-500">
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> — waiting for its reply
+                      </span>
+                    )}
                   </p>
                 )}
                 {message.role === 'user'
@@ -659,9 +687,12 @@ export function AssistantPanel({
       </div>
 
       <div className="border-t p-4">
-        <div className="mb-2 flex justify-end">
-          <ModelPicker value={model} onChange={setModel} disabled={sending} />
-        </div>
+        {/* No model of ours answers an external agent's thread. */}
+        {!external && (
+          <div className="mb-2 flex justify-end">
+            <ModelPicker value={model} onChange={setModel} disabled={sending} />
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             ref={composerRef}
@@ -677,7 +708,7 @@ export function AssistantPanel({
                 indentOnTab(event)
               }
             }}
-            placeholder={agent ? `Ask about ${agent.title}...` : 'Select an agent to start chatting…'}
+            placeholder={agent ? (external ? `Send ${agent.title} a task…` : `Ask about ${agent.title}...`) : 'Select an agent to start chatting…'}
             disabled={!agent || sending}
             aria-label="Message the assistant"
             className="min-h-9 w-full flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-colors duration-fast placeholder:text-muted-foreground hover:border-graphite-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"

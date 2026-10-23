@@ -13,7 +13,6 @@
  * again; rotation replaces either and returns the new one once.
  */
 
-import { randomBytes } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import { prisma, tenantTransaction } from '@/lib/prisma'
 import { encryptSecret } from '@/lib/crypto/secrets'
@@ -333,7 +332,3 @@ export async function removeExternalAgent(params: { organizationId: string; acto
   }
 }
 
-/** A short random avatar seed, for a registration that did not pick one. */
-export function randomAvatarSeed(): string {
-  return `external-${randomBytes(6).toString('hex')}`
-}

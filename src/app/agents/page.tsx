@@ -7,6 +7,7 @@ import { AlertCircle, ArrowLeft, Bot, FileText, List, Loader2, Play, Plus, Setti
 import { AgentActivityPane, resultText } from './agent-activity-pane'
 import { AgentScopePanel } from '@/components/agents/agent-scope-card'
 import { ActionLedger } from '@/components/agents/action-ledger'
+import { ExternalAgentSettings } from '@/components/agents/external-agent-settings'
 import { AgentsGallery } from './agents-gallery'
 import { AgentSkillsPanel } from './agent-skills-panel'
 import { AgentConfigForm, type AgentDraft } from './agent-config-form'
@@ -610,7 +611,10 @@ function AgentHQ() {
                   // Trust: what it may do (resolved like a run) and what it did.
                   { id: 'access', label: 'Access' },
                   { id: 'actions', label: 'Actions' },
-                ] as const).map((tab) => (
+                ] as const)
+                  // An external agent runs elsewhere: it has no skills of ours to teach.
+                  .filter((tab) => !(tab.id === 'skills' && selectedAgent.agentType === 'external'))
+                  .map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
@@ -640,7 +644,26 @@ function AgentHQ() {
             </div>
           )}
 
-          {!loading && showSetup && (
+          {/* An external agent has no instructions, model or tools of ours:
+              configuring it means its delivery settings and credentials. */}
+          {!loading && showSetup && editingAgent?.agentType === 'external' && (
+            <div className="p-4">
+              <ExternalAgentSettings
+                key={editingAgent.id}
+                agentId={editingAgent.id}
+                onChanged={() => load(true).catch(() => undefined)}
+                onRemoved={() => {
+                  notifyAgentsChanged()
+                  setView('gallery')
+                  setSelectedAgentId(null)
+                  setConfigureOpen(false)
+                  void load(true).catch(() => undefined)
+                }}
+              />
+            </div>
+          )}
+
+          {!loading && showSetup && editingAgent?.agentType !== 'external' && (
             <div className="space-y-4 p-4">
               {/* Flows-parity first screen: pick a path before any fields show. */}
               {!editingAgent && setupMode === 'choice' && (

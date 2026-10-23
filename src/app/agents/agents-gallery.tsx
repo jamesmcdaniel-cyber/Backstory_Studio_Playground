@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Search, Users, X } from 'lucide-react'
+import { Globe, Plus, Search, Users, X } from 'lucide-react'
 import { RosterCard } from './roster-card'
+import { ExternalAgentDialog } from '@/components/agents/external-agent-dialog'
+import { notifyAgentsChanged } from '@/components/layout/sidebar'
 import { TeammatePanel } from './teammate-panel'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -47,6 +49,7 @@ export function AgentsGallery({
   const [teammateLabels, setTeammateLabels] = useState<Record<string, string>>({})
   const [openTeammateId, setOpenTeammateId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [addingExternal, setAddingExternal] = useState(false)
   // Subjects already sent for labeling, so a slow model call or a sanitizer
   // miss doesn't retrigger a request on every agents poll.
   const requestedLabels = useRef<Set<string>>(new Set())
@@ -58,17 +61,27 @@ export function AgentsGallery({
       .catch(() => undefined)
   }, [])
 
+  const loadScopes = useCallback(() => {
+    fetch('/api/agents/scope', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => setScopes(data?.scopes ?? {}))
+      .catch(() => setScopes({}))
+  }, [])
+  const onExternalRegistered = useCallback(() => {
+    // The roster comes from the shared agents snapshot: wake it so the new
+    // teammate appears without a reload, and resolve its scope line.
+    notifyAgentsChanged()
+    loadScopes()
+  }, [loadScopes])
+
   useEffect(() => {
     fetch('/api/agents/kpis', { cache: 'no-store' })
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => { if (data?.kpis) setKpis(data.kpis) })
       .catch(() => undefined)
     loadTeammates()
-    fetch('/api/agents/scope', { cache: 'no-store' })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => setScopes(data?.scopes ?? {}))
-      .catch(() => setScopes({}))
-  }, [loadTeammates])
+    loadScopes()
+  }, [loadTeammates, loadScopes])
 
   // The unfiltered roster drives the label backfill and the empty state, so a
   // search that matches nothing never looks like a workspace with no agents.
@@ -134,11 +147,15 @@ export function AgentsGallery({
           title="Hire your first agent"
           description="Agents do real work — research accounts, draft reports, watch your pipeline. Create one and it shows up here."
         />
-        <div className="mt-4 flex justify-center">
+        <div className="mt-4 flex justify-center gap-2">
+          <Button variant="outline" onClick={() => setAddingExternal(true)}>
+            <Globe className="mr-1.5 h-4 w-4" aria-hidden="true" /> Add external agent
+          </Button>
           <Button onClick={onCreateAgent}>
             <Plus className="mr-1.5 h-4 w-4" /> New agent
           </Button>
         </div>
+        <ExternalAgentDialog open={addingExternal} onOpenChange={setAddingExternal} onRegistered={onExternalRegistered} />
       </div>
     )
   }
@@ -180,6 +197,9 @@ export function AgentsGallery({
               </button>
             )}
           </div>
+          <Button variant="outline" onClick={() => setAddingExternal(true)}>
+            <Globe className="mr-1.5 h-4 w-4" aria-hidden="true" /> Add external agent
+          </Button>
           <Button onClick={onCreateAgent}>
             <Plus className="mr-1.5 h-4 w-4" /> New agent
           </Button>
@@ -217,6 +237,7 @@ export function AgentsGallery({
             onConfigure={() => onEditAgent(agent.id)}
             configureLabel={`Configure ${agent.title}`}
             scope={scopes ? scopes[agent.id] ?? null : null}
+            external={agent.agentType === 'external'}
           />
         ))}
         {/* The create tile belongs to the roster, not to a filtered view of it. */}
@@ -236,6 +257,11 @@ export function AgentsGallery({
           No agent matches “{query.trim()}”. Try a name, or what the agent does — “renewals”, “summarize”.
         </p>
       )}
+      <ExternalAgentDialog
+        open={addingExternal}
+        onOpenChange={setAddingExternal}
+        onRegistered={onExternalRegistered}
+      />
       {openCard && (
         <TeammatePanel
           teammate={openCard.teammate}

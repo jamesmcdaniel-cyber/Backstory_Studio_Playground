@@ -72,7 +72,7 @@ import type { StepStatus } from '@/lib/flows/node-presentation'
 import { cn } from '@/lib/utils'
 import { DEFAULT_FLOW_SETTINGS, parseFlowSettings, type FlowSettings } from '@/lib/flows/settings'
 
-type Agent = { id: string; title: string; icon?: string }
+type Agent = { id: string; title: string; icon?: string; agentType?: 'custom' | 'external' }
 type FlowSettingsDraft = FlowSettings & { name: string; description: string; icon: string; folder: string }
 
 /** Ordered main-chain ids from the trigger, for upstream-token help. */
@@ -464,7 +464,7 @@ function FlowBuilder() {
           // rather than a blank builder that would autosave over the real flow.
           setLoadError(joinFailure ?? 'NOT_FOUND')
         }
-        setAgents(agentsData.success ? agentsData.agents.map((a: Agent) => ({ id: a.id, title: a.title, icon: a.icon })) : [])
+        setAgents(agentsData.success ? agentsData.agents.map(toPickerAgent) : [])
       })
       .catch(() => {
         // Network/parse failure loading the flow — same guard: never render an
@@ -2170,7 +2170,7 @@ function FlowBuilder() {
 
   const refreshAgents = useCallback(async () => {
     const data = await fetch('/api/agents', { cache: 'no-store' }).then((r) => r.json()).catch(() => null)
-    if (data?.success) setAgents(data.agents.map((a: Agent) => ({ id: a.id, title: a.title, icon: a.icon })))
+    if (data?.success) setAgents(data.agents.map(toPickerAgent))
   }, [])
 
   if (loading) {
@@ -3262,6 +3262,15 @@ function FlowBuilder() {
 }
 
 // useSearchParams needs a Suspense boundary — same pattern as the other pages.
+/**
+ * An agent as the step pickers list it. An external agent (someone else's
+ * infrastructure, no platform tools) says so, so nobody wires it into a flow
+ * expecting it to call the workspace's connections.
+ */
+function toPickerAgent(agent: Agent) {
+  return { id: agent.id, title: agent.agentType === 'external' ? `${agent.title} (external)` : agent.title, icon: agent.icon }
+}
+
 export default function FlowBuilderPage() {
   return (
     <Suspense fallback={null}>

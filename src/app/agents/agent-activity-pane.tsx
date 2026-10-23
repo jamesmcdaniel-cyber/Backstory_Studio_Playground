@@ -63,7 +63,7 @@ type RunDetails = {
   messages: Array<{ id: string; role: string; content: string; createdAt: string }>
 }
 
-export const groupOrder = ['running', 'cancelling', 'waiting_for_input', 'waiting_for_approval', 'failed', 'blocked', 'cancelled', 'completed'] as const
+export const groupOrder = ['running', 'cancelling', 'waiting_for_input', 'waiting_for_approval', 'waiting_for_external', 'failed', 'blocked', 'cancelled', 'completed'] as const
 type ActivityGroup = (typeof groupOrder)[number]
 
 // Keep the initial HQ view inside the available pane height. Counts remain
@@ -75,6 +75,8 @@ export const groupLabels: Record<string, string> = {
   cancelling: 'Cancelling',
   waiting_for_input: 'Needs input',
   waiting_for_approval: 'Needs approval',
+  // An external agent has the task; the run continues when it replies.
+  waiting_for_external: 'Waiting for reply',
   failed: 'Error',
   // Distinct from both Error and Success: the run did its work but could not
   // deliver it, because a write integration never resolved.
@@ -105,6 +107,8 @@ function runStatusIcon(status: string) {
     case 'waiting_for_input':
     case 'waiting_for_approval':
       return <HelpCircle className="h-4 w-4 shrink-0 text-amber-500" aria-label="Needs input" />
+    case 'waiting_for_external':
+      return <CircleDashed className="h-4 w-4 shrink-0 text-indigo-500" aria-label="Waiting for the external agent" />
     case 'cancelled':
       return <XCircle className="h-4 w-4 shrink-0 text-fg-muted" aria-label="Cancelled" />
     default:
@@ -497,7 +501,7 @@ function RunRow({
   const [actionBusy, setActionBusy] = useState(false)
   const [confirmAction, setConfirmAction] = useState<'cancel' | 'delete' | null>(null)
   const status = activityStatus(activity)
-  const isActive = ['running', 'pending', 'cancelling', 'waiting_for_input', 'waiting_for_approval'].includes(status)
+  const isActive = ['running', 'pending', 'cancelling', 'waiting_for_input', 'waiting_for_approval', 'waiting_for_external'].includes(status)
   const isCancellable = isCancellableRunStatus(status)
   const isTerminal = isTerminalRunStatus(status)
   const { items: timeline, suggestions } = buildProcessTimeline(details?.events ?? [], details?.steps ?? [])
@@ -715,12 +719,18 @@ function RunRow({
                             ? <AutoAnswerCard question={item.question} answer={item.answer} />
                             : item.kind === 'knowledge'
                               ? <KnowledgeCard summary={item.summary} documents={item.documents} />
-                              : <ToolCallCard step={item.step} />}
+                              : item.kind === 'external'
+                                ? (
+                                  <p className={cn('rounded-lg border border-dashed px-3 py-2 text-sm', item.from === 'agent' ? 'border-indigo-200 bg-indigo-50/50 text-foreground' : 'border-gray-200 text-muted-foreground')}>
+                                    {item.text}
+                                  </p>
+                                )
+                                : <ToolCallCard step={item.step} />}
                 </div>
               ))}
               {isActive && (
                 <p className="flex items-center gap-2 px-1 text-sm text-blue-600">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Agent is working…
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> {status === 'waiting_for_external' ? 'Waiting for the external agent to reply…' : 'Agent is working…'}
                 </p>
               )}
               {!details && <p className="text-sm text-gray-500"><Loader2 className="inline h-3.5 w-3.5 animate-spin" /> Loading run detail…</p>}
@@ -826,6 +836,7 @@ export function AgentActivityPane({
                 groupStatus === 'running' ? <CircleDashed className="h-4 w-4 animate-spin text-blue-600" /> :
                 groupStatus === 'cancelling' ? <CircleDashed className="h-4 w-4 animate-spin text-gray-400" /> :
                 groupStatus === 'waiting_for_input' || groupStatus === 'waiting_for_approval' ? <HelpCircle className="h-4 w-4 text-amber-500" /> :
+                groupStatus === 'waiting_for_external' ? <CircleDashed className="h-4 w-4 text-indigo-500" /> :
                 groupStatus === 'cancelled' ? <XCircle className="h-4 w-4 text-gray-400" /> :
                 groupStatus === 'blocked' ? <AlertCircle className="h-4 w-4 text-amber-600" /> :
                 <AlertCircle className="h-4 w-4 text-red-600" />}

@@ -34,6 +34,7 @@ export function RosterCard({
   onConfigure,
   configureLabel,
   scope,
+  external = false,
 }: {
   /** Stable avatar seed — the teammate id, or the agent id for a solo agent. */
   seed: string
@@ -53,6 +54,11 @@ export function RosterCard({
    * null while it loads keeps the card's height steady.
    */
   scope?: AgentScopeSummary | null
+  /**
+   * Runs on someone else's infrastructure. The dashed frame round the face is
+   * the boundary — the same mark its scope card draws round what crosses it.
+   */
+  external?: boolean
 }) {
   const finished = stats.completed + stats.failed + stats.blocked
   // Success rate is measured-only: an agent whose runs are known solely via
@@ -82,7 +88,14 @@ export function RosterCard({
         onClick={onOpen}
         className="relative flex w-full flex-col items-center rounded-2xl px-4 pb-4 pt-6 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-300"
       >
-        <span className="relative rounded-[1.4rem] bg-white p-1 shadow-[0_12px_28px_-10px_rgba(30,41,59,0.4)] ring-1 ring-black/[0.06] transition-transform duration-200 group-hover:scale-[1.025]">
+        <span
+          className={cn(
+            'relative rounded-[1.4rem] bg-white p-1 transition-transform duration-200 group-hover:scale-[1.025]',
+            external
+              ? 'outline-dashed outline-2 outline-offset-[3px] outline-gray-300'
+              : 'shadow-[0_12px_28px_-10px_rgba(30,41,59,0.4)] ring-1 ring-black/[0.06]',
+          )}
+        >
           <AgentAvatar seed={seed} className="h-28 w-24 rounded-[1.15rem]" />
           {/* Presence dot: green on the clock, pale when set up but manual,
               gray while setup is unfinished. */}
@@ -95,7 +108,10 @@ export function RosterCard({
           />
         </span>
         <span className="mt-3 line-clamp-1 w-full text-sm font-semibold text-foreground">{name}</span>
-        <span className="mt-1.5 flex h-6 items-center">
+        <span className="mt-1.5 flex h-6 items-center gap-1.5">
+          {external && (
+            <span className="rounded-full border border-dashed border-gray-400 px-2 py-0.5 text-xs font-medium text-gray-700">External</span>
+          )}
           {role ? (
             <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">{role}</span>
           ) : roleLoading ? (

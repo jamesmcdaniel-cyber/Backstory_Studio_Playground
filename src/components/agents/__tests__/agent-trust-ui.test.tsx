@@ -39,7 +39,7 @@ const scope: AgentScope = {
 test('the roster line shows counts and the trust badges', () => {
   render(<AgentScopeSummaryLine summary={summarizeScope(scope)} />)
   assert.ok(screen.getByText('4 tools'))
-  assert.ok(screen.getByText(/2 can write/))
+  assert.ok(screen.getByText(/2 write/))
   assert.ok(screen.getByText(/Asks first/))
   assert.ok(screen.getByText(/2 blocked/))
   cleanup()

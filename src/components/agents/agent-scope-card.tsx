@@ -67,29 +67,34 @@ const plural = (count: number, one: string, many = `${one}s`) => `${count.toLoca
  * button, so it must not add an interactive element of its own.
  */
 export function AgentScopeSummaryLine({ summary, className }: { summary: AgentScopeSummary | null | undefined; className?: string }) {
-  if (!summary) return <span className={cn('block h-5', className)} aria-hidden="true" />
+  // Two fixed rows (counts, then trust badges) so every card on the roster
+  // keeps the same height whatever an agent carries.
+  if (!summary) return <span className={cn('block h-10', className)} aria-hidden="true" />
   const { counts } = summary
+  const approval = summary.agentRequiresApproval ? 'Asks first' : counts.needsApproval > 0 ? `${counts.needsApproval} need approval` : null
   return (
-    <span className={cn('flex h-5 w-full items-center justify-center gap-1.5 text-[11px] text-muted-foreground', className)}>
-      <span className="tabular-nums">{summary.jobs ? `Up to ${plural(counts.tools, 'tool')}` : plural(counts.tools, 'tool')}</span>
-      {counts.writes > 0 && (
-        <span className="inline-flex items-center gap-0.5 tabular-nums">
-          <PenLine className="h-3 w-3" aria-hidden="true" />
-          {counts.writes} can write
-        </span>
-      )}
-      {summary.agentRequiresApproval ? (
-        <span className="inline-flex items-center gap-0.5 rounded-full bg-[var(--status-warn-bg)] px-1.5 text-[var(--status-warn-fg)]">
-          <Hand className="h-3 w-3" aria-hidden="true" /> Asks first
-        </span>
-      ) : counts.needsApproval > 0 ? (
-        <span className="inline-flex items-center gap-0.5 rounded-full bg-[var(--status-warn-bg)] px-1.5 text-[var(--status-warn-fg)]">
-          <Hand className="h-3 w-3" aria-hidden="true" /> {counts.needsApproval} gated
-        </span>
-      ) : null}
-      {counts.blocked > 0 && (
-        <span className="inline-flex items-center gap-0.5 rounded-full bg-[var(--status-risk-bg)] px-1.5 text-[var(--status-risk-fg)]">
-          <Ban className="h-3 w-3" aria-hidden="true" /> {counts.blocked} blocked
+    <span className={cn('flex h-10 w-full flex-col items-center justify-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground', className)}>
+      <span className="flex items-center gap-1.5 tabular-nums">
+        <span>{summary.jobs ? `Up to ${plural(counts.tools, 'tool')}` : plural(counts.tools, 'tool')}</span>
+        {counts.writes > 0 && (
+          <span className="inline-flex items-center gap-0.5">
+            <PenLine className="h-3 w-3" aria-hidden="true" />
+            {counts.writes} write
+          </span>
+        )}
+      </span>
+      {(approval || counts.blocked > 0) && (
+        <span className="flex items-center gap-1">
+          {approval && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-[var(--status-warn-bg)] px-1.5 text-[var(--status-warn-fg)]">
+              <Hand className="h-3 w-3" aria-hidden="true" /> {approval}
+            </span>
+          )}
+          {counts.blocked > 0 && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-[var(--status-risk-bg)] px-1.5 text-[var(--status-risk-fg)]">
+              <Ban className="h-3 w-3" aria-hidden="true" /> {counts.blocked} blocked
+            </span>
+          )}
         </span>
       )}
     </span>

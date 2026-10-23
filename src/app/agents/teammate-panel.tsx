@@ -221,7 +221,7 @@ export function TeammatePanel({
                             {agent.roleLabel ? `${agent.roleLabel} · ` : ''}
                             {runs === 1 ? '1 run' : `${runs.toLocaleString()} runs`}
                           </span>
-                          {scopes[agent.id] && <AgentScopeSummaryLine summary={scopes[agent.id]} className="mt-1 justify-start" />}
+                          {scopes[agent.id] && <AgentScopeSummaryLine summary={scopes[agent.id]} className="mt-1 h-auto items-start" />}
                         </button>
                         <Button
                           size="icon"

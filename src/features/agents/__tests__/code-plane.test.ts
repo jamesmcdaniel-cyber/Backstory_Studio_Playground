@@ -13,7 +13,8 @@ test('code execution is a builtin, read-only plane', () => {
 
 test('every agent gets the code plane, not only ones that selected it', () => {
   // An agent handed a CSV without it can only refuse or guess at the numbers.
-  const source = readFileSync(new URL('../execute-agent.ts', import.meta.url), 'utf8')
+  // The plane list lives in agent-tool-resolution, shared by runs and the scope card.
+  const source = readFileSync(new URL('../agent-tool-resolution.ts', import.meta.url), 'utf8')
   // Every agent: its own providers plus repository and code (an ROI
   // dashboard's conversation adds the ROI plane on top, never instead).
   assert.match(source, /\[\.\.\.providers, 'repository', 'code'\]/)

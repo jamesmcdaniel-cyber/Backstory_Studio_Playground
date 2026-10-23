@@ -26,8 +26,10 @@ jobs:
         with: { name: playwright-report-anonymous, path: playwright-report, retention-days: 14 }
 
   # The authenticated journeys. Split into its own job for two reasons: it needs
-  # secrets the anonymous suite does not, and it must be able to be ABSENT
-  # without turning the workflow red — while still saying so out loud.
+  # secrets the anonymous suite does not, and where those secrets are absent by
+  # design (forks, fork PRs, the customers mirror) it must skip without turning
+  # the workflow red, while still saying so out loud. On the source repository
+  # absent secrets fail this job. Setup: docs/e2e-authenticated-setup.md.
   authenticated:
     name: Authenticated journeys
     runs-on: ubuntu-latest
@@ -37,10 +39,18 @@ jobs:
         with: { node-version: 20, cache: npm }
 
       # Secrets cannot be referenced in a job-level `if:`, so the decision is
-      # made here and every later step keys off its output. The annotation is
-      # the point: an unconfigured authenticated suite must appear in the
-      # Actions summary as a warning a human reads, not as a silent green tick
-      # that looks exactly like nine passing journeys.
+      # made here and every later step keys off its output.
+      #
+      # Missing secrets mean two different things depending on WHERE this runs:
+      #   - On a fork, a pull request from a fork, a Dependabot PR, or the
+      #     Backstory_customers mirror, the secrets are absent BY DESIGN (GitHub
+      #     withholds them, or the mirror deliberately holds none). The job
+      #     skips with a notice and stays green.
+      #   - Anywhere else (the source repository, whatever it is named) absent
+      #     secrets are a configuration gap, and the job FAILS so the gap stays
+      #     visible instead of hiding behind a green tick that looks exactly
+      #     like passing journeys. Deliberately not keyed on the source repo's
+      #     name: the repository has been renamed before.
       - id: gate
         name: Check for authenticated end-to-end secrets
         env:
@@ -50,40 +60,68 @@ jobs:
           E2E_SUPABASE_URL: ${{ secrets.E2E_SUPABASE_URL }}
           E2E_SUPABASE_ANON_KEY: ${{ secrets.E2E_SUPABASE_ANON_KEY }}
           E2E_DATABASE_URL: ${{ secrets.E2E_DATABASE_URL }}
-          EVENT_NAME: ${{ github.event_name }}
+          IS_MIRROR: ${{ github.repository == 'jamesmcdaniel-cyber/Backstory_customers' }}
+          IS_FORK: ${{ github.event.repository.fork == true }}
+          PR_FROM_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          IS_DEPENDABOT: ${{ github.actor == 'dependabot[bot]' }}
         # Secrets are read through `env`, never interpolated into the script
         # body: `${{ secrets.X }}` inside `run:` splices the value into the
         # shell source, where a character like a quote or backtick in a
         # connection string becomes executable text.
         run: |
-          missing=""
+          where() {
+            case "$1" in
+              E2E_BASE_URL) echo "the deployment under test, e.g. https://<app>.vercel.app" ;;
+              E2E_USER_EMAIL) echo "the address scripts/e2e/provision-test-account.ts provisioned" ;;
+              E2E_USER_PASSWORD) echo "the password that script printed (or the one you passed it)" ;;
+              E2E_SUPABASE_URL) echo "Supabase dashboard > Project Settings > API > Project URL" ;;
+              E2E_SUPABASE_ANON_KEY) echo "Supabase dashboard > Project Settings > API > anon public key" ;;
+            esac
+          }
+          missing=()
           for name in E2E_BASE_URL E2E_USER_EMAIL E2E_USER_PASSWORD E2E_SUPABASE_URL E2E_SUPABASE_ANON_KEY; do
-            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+            if [ -z "${!name}" ]; then missing+=("$name"); fi
           done
-          if [ -n "$missing" ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            if [ "$EVENT_NAME" = "push" ]; then
-              echo "::error title=Authenticated E2E journeys cannot run::Missing repository secrets:$missing. Protected-branch pushes require the authenticated product gate."
-            else
-              echo "::warning title=Authenticated E2E journeys did not run::Missing repository secrets:$missing. The nine authenticated product journeys were SKIPPED, not passed. See e2e/README.md for what each secret is and what the test account must look like."
-            fi
-            {
-              echo "### ⚠️ Authenticated journeys skipped"
-              echo
-              echo "Missing secrets:$missing"
-              echo
-              echo "The authenticated suite did not run. This job is green because the"
-              echo "secrets are absent, **not** because the journeys passed."
-              echo
-              echo "See \`e2e/README.md\`."
-            } >> "$GITHUB_STEP_SUMMARY"
-            if [ "$EVENT_NAME" = "push" ]; then exit 1; fi
-          else
+
+          if [ ${#missing[@]} -eq 0 ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             if [ -z "$E2E_DATABASE_URL" ]; then
-              echo "::warning title=Free-tier ceiling journey will skip::E2E_DATABASE_URL is not set, so the daily-run-cap journey cannot arrange its precondition and will report as skipped."
+              echo "::notice title=Free-tier ceiling journey will skip::E2E_DATABASE_URL is not set, so the daily-run-cap journey cannot arrange its precondition and will report as skipped. Every other journey runs."
             fi
+            exit 0
           fi
+
+          echo "run=false" >> "$GITHUB_OUTPUT"
+          reason=""
+          if [ "$IS_MIRROR" = "true" ]; then reason="this is the Backstory_customers mirror, which holds no end-to-end credentials"
+          elif [ "$IS_FORK" = "true" ]; then reason="this repository is a fork, which does not hold the source repository's secrets"
+          elif [ "$PR_FROM_FORK" = "true" ]; then reason="this pull request comes from a fork, and GitHub withholds secrets from fork pull requests"
+          elif [ "$IS_DEPENDABOT" = "true" ]; then reason="Dependabot runs without repository secrets"
+          fi
+
+          {
+            if [ -n "$reason" ]; then echo "### Authenticated journeys skipped"; else echo "### Authenticated journeys cannot run: secrets missing"; fi
+            echo
+            echo "| Missing secret | Where the value comes from |"
+            echo "|---|---|"
+            for name in "${missing[@]}"; do echo "| \`$name\` | $(where "$name") |"; done
+            echo
+            if [ -n "$reason" ]; then
+              echo "Skipped because $reason. That is expected here; the journeys run on the source repository."
+            else
+              echo "Set them under **Settings > Secrets and variables > Actions**. One-time setup: \`docs/e2e-authenticated-setup.md\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$reason" ]; then
+            echo "::notice title=Authenticated E2E journeys skipped::Skipped because $reason. Missing: ${missing[*]}."
+            exit 0
+          fi
+          for name in "${missing[@]}"; do
+            echo "::error title=Missing secret ${name}::${name} is not set. It is $(where "$name"). See docs/e2e-authenticated-setup.md."
+          done
+          echo "::error title=Authenticated E2E journeys cannot run::Missing repository secrets: ${missing[*]}. The signed-in journeys did not run. One-time setup: docs/e2e-authenticated-setup.md."
+          exit 1
 
       - if: steps.gate.outputs.run == 'true'
         run: npm ci

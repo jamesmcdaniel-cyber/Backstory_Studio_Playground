@@ -545,7 +545,9 @@ export function AssistantPanel({
         </div>
         <p className="mt-1 text-xs text-gray-500">
           {agent
-            ? 'Ask about runs, change configuration, or tell the agent what to do — it runs with its connected tools.'
+            ? external
+              ? 'Send it a task. It runs outside Backstory with no platform tools and sees only your message.'
+              : 'Ask about runs, change configuration, or tell the agent what to do — it runs with its connected tools.'
             : 'Pick an agent to ask about its runs, change its configuration, or put it to work.'}
         </p>
       </div>

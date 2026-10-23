@@ -43,7 +43,10 @@ if (TEST_DB) {
     const testAuth = await import('@/lib/server/__tests__/test-auth')
     installTestAuth = testAuth.installTestAuth
     partner = await testAuth.seedTestOrg(prisma, { orgKind: 'partner' })
-    backstory = await testAuth.seedTestOrg(prisma, { orgKind: 'internal', platformRole: 'reviewer' })
+    // resolveInternalOrgId picks the OLDEST internal org, and every DB test file
+    // shares one database: this file must BE the platform, so its org is dated
+    // before any other fixture (the rest date theirs far future, or now).
+    backstory = await testAuth.seedTestOrg(prisma, { orgKind: 'internal', platformRole: 'reviewer', orgCreatedAt: new Date('1990-01-01T00:00:00.000Z') })
     submissionId = await openSubmission()
   })
 

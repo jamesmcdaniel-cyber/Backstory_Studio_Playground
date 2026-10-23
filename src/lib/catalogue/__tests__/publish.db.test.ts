@@ -93,8 +93,14 @@ test('resolveInternalOrgId picks the OLDEST internal org and never a customer on
   try {
     const resolved = await resolveInternalOrgId()
 
-    assert.equal(resolved, older.organizationId)
+    // Another file may hold an even older internal fixture (the catalogue
+    // review test must be the platform), so pin the property, not the id:
+    // never the newer one, never a customer, and nothing internal is older.
     assert.notEqual(resolved, newer.organizationId)
+    const resolvedRow = await systemPrisma.organization.findFirst({ where: { id: resolved }, select: { kind: true, createdAt: true } })
+    assert.equal(resolvedRow?.kind, 'internal')
+    assert.ok(resolvedRow!.createdAt.getTime() <= new Date('2000-01-01').getTime())
+    assert.equal(await systemPrisma.organization.count({ where: { kind: 'internal', createdAt: { lt: resolvedRow!.createdAt } } }), 0)
     assert.notEqual(resolved, customer.organizationId)
   } finally {
     await dropOrg(customer.organizationId)

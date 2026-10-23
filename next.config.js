@@ -9,9 +9,15 @@ const nextConfig = {
   // Supabase Realtime resolves a runtime transport dynamically. They are
   // server dependencies, not bundle targets; externalizing them keeps Next
   // from warning about code paths Node will resolve only when actually used.
-  serverExternalPackages: ['@prisma/client', '@supabase/realtime-js', 'bullmq', 'pyodide'],
+  //
+  // QuickJS (the JavaScript code-step sandbox) is external too, and its WASM
+  // traced the same way: bundled by webpack, its emscripten loader fails at
+  // start-up with "a is not a function", so every JavaScript step executed
+  // inside the Next server (EXECUTION_MODE=inline) failed while the same step
+  // on the tsx worker succeeded. Found by the flow-lifecycle browser journey.
+  serverExternalPackages: ['@prisma/client', '@supabase/realtime-js', 'bullmq', 'pyodide', 'quickjs-emscripten', 'quickjs-emscripten-core'],
   outputFileTracingIncludes: {
-    '/*': ['./node_modules/pyodide/**/*'],
+    '/*': ['./node_modules/pyodide/**/*', './node_modules/@jitl/quickjs-wasmfile-release-sync/dist/*.wasm'],
   },
   async headers() {
     return [

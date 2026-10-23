@@ -45,15 +45,34 @@ export function runsToggle(page: Page): Locator {
  * "Compose" colliding with any other row.
  */
 export async function addComposeStep(page: Page): Promise<void> {
+  await addStepFromPicker(page, 'Compose', /Pass a value through so later steps can reuse it/)
+}
+
+/**
+ * Add a JavaScript code step. Its seed code is `return input;`, which passes
+ * validation and runs in the sandboxed code runtime with no integration,
+ * credential, network call or model — the smallest step that exercises the
+ * real execution path end to end.
+ */
+export async function addJavaScriptStep(page: Page): Promise<void> {
+  await addStepFromPicker(page, 'JavaScript', /Transform data with custom JavaScript in an isolated process/)
+}
+
+/** Open the step picker at the first insertion point and add the row whose description matches. */
+async function addStepFromPicker(page: Page, search: string, description: RegExp): Promise<void> {
   // `step-add-inline` disambiguates from the two other "Add step" controls
   // (the canvas view's standalone button and its per-handle add buttons) —
   // `.first()` still picks the insertion point right after the trigger, since
   // the inline chain repeats this control at every gap.
   await page.getByTestId('step-add-inline').first().click()
-  const search = page.getByTestId('picker-search')
-  await expect(search, 'the step picker did not open').toBeVisible()
-  await search.fill('Compose')
-  await page.getByRole('button', { name: /Pass a value through so later steps can reuse it/ }).click()
+  // A blank flow also shows the TRIGGER picker inline, which carries the same
+  // testid — so the step picker is the one searching agents/actions.
+  const field = page.getByTestId('picker-search').and(page.getByPlaceholder('Search agents, actions, or connectors'))
+  await expect(field, 'the step picker did not open').toBeVisible()
+  await field.fill(search)
+  // A search can list the same entry under more than one section; every copy
+  // adds the same step, so the first is as good as any.
+  await page.getByRole('button', { name: description }).first().click()
 
   // Adding a step does not reliably leave the inspector open (in the canvas
   // view any selection change closes it), so open it explicitly rather than
@@ -89,7 +108,7 @@ export async function configureComposeInput(page: Page, value: string): Promise<
 
 /** Rename the open step. The card label follows, which is what we assert on. */
 export async function renameStep(page: Page, name: string): Promise<void> {
-  const field = inspector(page).getByPlaceholder('A short name for this step')
+  const field = inspector(page).getByRole('textbox', { name: 'Step name', exact: true })
   await field.fill(name)
   await field.blur()
 }

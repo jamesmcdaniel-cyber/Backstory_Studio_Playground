@@ -15,8 +15,9 @@
  *     an empty page (which reads as nothing at all).
  */
 import { readFileSync } from 'node:fs'
-import { expect, test as base, type Page } from '@playwright/test'
+import { expect, test as base, type Locator, type Page } from '@playwright/test'
 import { AUTH_MARKER, authSkipReason } from './env'
+import { deleteFlow } from './api'
 
 export interface Workspace {
   userId: string
@@ -38,7 +39,10 @@ function readMarker(): { authenticated: boolean; reason?: string } & Partial<Wor
   }
 }
 
-export const test = base.extend<{ workspace: Workspace }>({
+/** Flows each page created through {@link createBlankFlow}, deleted when its test ends. */
+const createdFlows = new WeakMap<Page, string[]>()
+
+export const test = base.extend<{ workspace: Workspace; flowCleanup: void }>({
   workspace: [
     async ({}, use, testInfo) => {
       const marker = readMarker()
@@ -48,6 +52,17 @@ export const test = base.extend<{ workspace: Workspace }>({
         organizationId: marker.organizationId!,
         canReview: Boolean(marker.canReview),
       })
+    },
+    { auto: true },
+  ],
+  // Every flow a journey creates is deleted through the API when the test
+  // ends, pass or fail — so CI with only the five required secrets (no
+  // database URL) still leaves the workspace as it found it. Deleting a flow
+  // cascades its runs, which also hands the daily run allowance back.
+  flowCleanup: [
+    async ({ page }, use) => {
+      await use()
+      for (const id of createdFlows.get(page) ?? []) await deleteFlow(page.request, id).catch(() => undefined)
     },
     { auto: true },
   ],
@@ -75,18 +90,26 @@ export async function createBlankFlow(page: Page): Promise<string> {
   await page.waitForURL(/\/flows\/[^/?]+/)
   const id = new URL(page.url()).pathname.split('/').pop()!
   expect(id, 'the builder URL carried no flow id').toBeTruthy()
+  createdFlows.set(page, [...(createdFlows.get(page) ?? []), id])
   return id
+}
+
+/**
+ * The builder header's name INPUT (`aria-label="Flow name"`) — not a heading,
+ * there is no <h1> for it. Matched as a textbox by exact name because the
+ * header's icon button ("Edit flow name, description, and icon") also matches
+ * a bare getByLabel('Flow name').
+ */
+export function flowNameField(page: Page): Locator {
+  return page.getByRole('textbox', { name: 'Flow name', exact: true })
 }
 
 /**
  * Rename the open flow, so every artifact this suite leaves behind is
  * identifiable and the cleanup prefix actually matches something.
- *
- * The name lives in a header INPUT (`aria-label="Flow name"`), not a heading —
- * there is no <h1> for it.
  */
 export async function renameFlow(page: Page, name: string): Promise<void> {
-  const field = page.getByLabel('Flow name')
+  const field = flowNameField(page)
   await field.fill(name)
   await field.blur()
 }

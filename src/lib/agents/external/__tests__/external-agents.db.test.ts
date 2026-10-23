@@ -130,7 +130,7 @@ if (TEST_DB) {
     assert.equal(outbox.attempts, 1)
     network.state.webhookStatus = 200
     const { processOutboxEventById } = await import('@/lib/outbox')
-    await prisma.outboxEvent.update({ where: { id: outbox.id }, data: { availableAt: new Date(Date.now() - 1000) } })
+    await prisma.outboxEvent.update({ where: { id: outbox.id, organizationId: orgId }, data: { availableAt: new Date(Date.now() - 1000) } })
     assert.equal(await processOutboxEventById(outbox.id), 'delivered')
     assert.equal(network.state.webhook.length, 2, 'the retry re-delivered the same task')
     assert.equal(JSON.parse(network.state.webhook[1].body).executionId, waiting.executionId)
@@ -168,7 +168,7 @@ if (TEST_DB) {
 
     const second = await dispatch(view.agentId)
     const secondToken = JSON.parse(network.state.webhook.at(-1)!.body).reply.token
-    await prisma.agentExecution.update({ where: { id: second.executionId }, data: { replyTokenExpiresAt: new Date(Date.now() - 1000) } })
+    await prisma.agentExecution.update({ where: { id: second.executionId, organizationId: orgId }, data: { replyTokenExpiresAt: new Date(Date.now() - 1000) } })
     const expired = await POST(replyRequest(second.executionId, key, { replyToken: secondToken, status: 'completed', output: 'late' }))
     assert.deepEqual({ status: expired.status, body: await expired.text() }, wrong, 'an expired token reads exactly like a wrong one')
 
@@ -238,7 +238,7 @@ if (TEST_DB) {
     const { reapExpiredExternalExecutions } = await import('../settle')
     const { view } = await register({ name: 'Sleeper', replyTimeoutMinutes: 60 })
     const result = await dispatch(view.agentId)
-    await prisma.agentExecution.update({ where: { id: result.executionId }, data: { replyTokenExpiresAt: new Date(Date.now() - 60_000) } })
+    await prisma.agentExecution.update({ where: { id: result.executionId, organizationId: orgId }, data: { replyTokenExpiresAt: new Date(Date.now() - 60_000) } })
     const { timedOut } = await reapExpiredExternalExecutions(new Date())
     assert.ok(timedOut >= 1)
     const row = await waitFor(() => execution(result.executionId), (value: any) => value.status === 'failed')

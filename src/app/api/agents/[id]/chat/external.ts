@@ -78,7 +78,7 @@ export async function respondToExternalAgentChat(params: {
       metadata: { run },
     },
   })
-  await prisma.agentChatSession.update({ where: { id: session.id }, data: { title: session.title ?? deriveTitle(message) } }).catch(() => undefined)
+  await prisma.agentChatSession.update({ where: { id: session.id, organizationId: auth.organizationId }, data: { title: session.title ?? deriveTitle(message) } }).catch(() => undefined)
 
   try {
     await dispatchAgentExecution({ executionId: execution.id, agentId: agent.id, organizationId: auth.organizationId, userId: auth.dbUser.id, input: message })

@@ -7,9 +7,14 @@ gateway, the public API. Needs nothing but a running app. This is what runs on
 every pull request today.
 
 **Authenticated** (`auth setup` → `authenticated` → `authenticated (limits)`) —
-the nine product journeys. Needs a real signed-in identity, so it needs
-configuration. Without it, every journey reports **skipped with a reason**; none
-of them silently pass.
+the product journeys: the signed-in shell and its permission-gated nav, MCP
+servers and tool permissions, the flow create → run → delete loop, agent chat,
+Artifacts, Settings, and the builder/publish/invite/credential/template
+journeys. Needs a real signed-in identity, so it needs configuration. Without
+it, every journey reports **skipped with a reason**; none of them silently pass.
+
+**One-time setup — the test account, its workspace, the GitHub secrets, and the
+local-stack recipe — is in [`docs/e2e-authenticated-setup.md`](../docs/e2e-authenticated-setup.md).**
 
 ---
 
@@ -97,9 +102,21 @@ Every stub is at a network boundary, declared in the spec's header comment.
 | App-account connect | `POST /api/nango/session-token` | The next step mounts a `connect.nango.dev` iframe and hands the user to the provider's consent screen. Asserted up to our side of that boundary and no further. |
 | Invitation link | `GET /api/invitations/lookup` | Accepting for real calls `transferUserToOrganization`, which would MOVE the test user out of its own workspace and break every later run. The accept transaction is covered by API tests. |
 
-Everything else — flow create, save, run, publish, trigger arming, template
-install, member invite, and the free-tier ceiling — runs unstubbed against the
-real application and the real database.
+Not a stub: the agent chat journey HOLDS its `POST /api/agents/[id]/chat` in
+the browser just long enough to assert that the in-flight run panel opened,
+then releases it to the real server unchanged; it passes whether the model
+answers or the deployment's keys refuse.
+
+Everything else — flow create, save, run (including a JavaScript code step),
+publish, delete, trigger arming, template install, MCP server tools and tool
+permissions, member invite, the sidebar's permission-gated nav, Artifacts,
+Settings, and the free-tier ceiling — runs unstubbed against the real
+application and the real database.
+
+Every journey cleans up after itself: flows created through `createBlankFlow`
+are deleted through the API when the test ends (the `flowCleanup` fixture),
+agents and invitations by their name prefix, and the MCP journey restores the
+tool permission it changed.
 
 ---
 

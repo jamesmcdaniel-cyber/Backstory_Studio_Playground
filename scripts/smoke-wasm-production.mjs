@@ -20,21 +20,16 @@ async function walk(directory) {
 const serverFiles = await walk(serverDir)
 const javascriptFiles = serverFiles.filter((file) => file.endsWith('.js'))
 let bundledRunner = false
-let bundledQuickJS = false
 for (const file of javascriptFiles) {
   const source = await fs.readFile(file, 'utf8')
   if (source.includes('flow-code.js') && source.includes('__flow_user__')) bundledRunner = true
-  if (source.includes('QuickJSRuntime') || source.includes('quickJSEmscriptenExtensions')) bundledQuickJS = true
 }
 assert.ok(bundledRunner, 'The production server bundle does not contain the flow-code runner')
-assert.ok(bundledQuickJS, 'The production server bundle does not contain QuickJS')
 
-const bundledWasm = serverFiles.filter((file) => file.endsWith('.wasm'))
-assert.ok(bundledWasm.length > 0, 'The production server bundle does not contain QuickJS WASM')
-for (const wasmFile of bundledWasm) {
-  await WebAssembly.compile(await fs.readFile(wasmFile))
-}
-
+// QuickJS and Pyodide are serverExternalPackages (bundling QuickJS broke
+// JavaScript code steps inside the Next server): neither is in the bundle, so
+// what must hold is that their WASM is TRACED into the functions, compiles,
+// and executes — checked below for both.
 const traceFiles = serverFiles.filter((file) => file.endsWith('.nft.json'))
 const traced = new Set()
 for (const traceFile of traceFiles) {
@@ -45,6 +40,7 @@ for (const traceFile of traceFiles) {
 }
 
 const requiredArtifacts = [
+  '@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm',
   'pyodide/pyodide.asm.wasm',
   'pyodide/python_stdlib.zip',
 ]
@@ -52,6 +48,7 @@ for (const suffix of requiredArtifacts) {
   const artifact = [...traced].find((file) => file.replaceAll(path.sep, '/').endsWith(suffix))
   assert.ok(artifact, `Production function traces are missing ${suffix}`)
   await fs.access(artifact)
+  if (artifact.endsWith('.wasm')) await WebAssembly.compile(await fs.readFile(artifact))
 }
 
 // Exercise the public APIs and their real WASM binaries, not package metadata.
@@ -62,4 +59,4 @@ const pyodideDir = path.dirname(fileURLToPath(import.meta.resolve('pyodide/pyodi
 const pyodide = await loadPyodide({ indexURL: `${pyodideDir}/` })
 assert.equal(pyodide.runPython('sum([2, 3, 5])'), 10, 'Pyodide/WASM did not execute correctly')
 
-console.log('✓ production bundle contains executable QuickJS/WASM and traced Pyodide/WASM assets')
+console.log('✓ production functions trace executable QuickJS/WASM and Pyodide/WASM assets')

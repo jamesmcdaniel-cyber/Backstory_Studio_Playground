@@ -37,6 +37,10 @@ const SCOPES: Array<{ value: string; label: string; hint: string }> = [
   { value: 'flows:run', label: 'Run flows', hint: 'Trigger executions. Counts against your run limits.' },
 ]
 
+// Listed, never offered: `agents:reply` keys are issued by registering an
+// external agent (Agents → Add external agent) and rotated from that agent.
+const AGENT_KEY_SCOPE = 'agents:reply'
+
 const fmtDate = (value: string | null) =>
   value ? new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : null
 
@@ -127,6 +131,7 @@ export function DeveloperApiSection() {
               </div>
               <div className="flex flex-wrap gap-1">
                 {key.scopes.map((scope) => <Badge key={scope} variant="outline" className="font-mono text-[10px]">{scope}</Badge>)}
+                {key.scopes.includes(AGENT_KEY_SCOPE) && <span className="text-xs text-fg-muted">External agent key, managed from the agent</span>}
               </div>
               <Button size="sm" variant="ghost" disabled={busy === key.id} onClick={() => setRevoking(key)}>Revoke</Button>
             </li>

@@ -4,7 +4,13 @@ import { systemPrisma } from '@/lib/prisma'
 import { rateLimit } from '@/lib/ratelimit'
 import { recordSecurityEvent, recordTokenRejection, clientIp, requestPath } from '@/lib/security/events'
 
-export type ApiScope = 'flows:read' | 'flows:write' | 'flows:run'
+/**
+ * `agents:reply` is an external agent's ONLY capability: answer (and post
+ * progress on) tasks sent to it. It is minted solely by registering an
+ * external agent, never through /api/api-keys, and a key carrying it acts only
+ * on its own agent's executions (src/lib/agents/external/settle.ts).
+ */
+export type ApiScope = 'flows:read' | 'flows:write' | 'flows:run' | 'agents:reply'
 export type PublicApiContext = { organizationId: string; userId: string; keyId: string; scopes: ReadonlySet<string> }
 
 export function publicApiJson(body: unknown, status = 200): Response {

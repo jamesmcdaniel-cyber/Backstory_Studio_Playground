@@ -65,6 +65,12 @@ const mutatingExempt = new Set([
   'v1/flows',
   'v1/flows/[id]',
   'v1/flows/[id]/run',
+  // External agents answer through their own agents:reply key (bound to one
+  // agent) AND the task's single-use reply token — hashed at rest, compared in
+  // constant time, consumed atomically with the durable resume, one identical
+  // 404 for every failure, per-IP limits failing closed.
+  'v1/agents/executions/[id]/reply',
+  'v1/agents/executions/[id]/progress',
   'mcp',                 // workspace API key — same admission as v1 (authenticatePublicApi, flows:run)
 ])
 
@@ -100,6 +106,7 @@ const readExempt = new Set([
   'scim/v2/Groups/[id]',
   'v1/flows',
   'v1/flows/[id]',
+  'v1/agents/executions/[id]',      // an external agent's agents:reply key; its own executions only
   'flows/[id]/runs/[runId]/webhook-result', // same constant-time per-flow secret as webhook trigger
   'mcp',                            // workspace API key; GET answers 405 by design
 ])

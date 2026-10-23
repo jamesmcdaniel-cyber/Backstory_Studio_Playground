@@ -6,6 +6,9 @@ import { recordCredentialGrant } from '@/lib/credentials/audit'
 import { resolveTokenExpiry } from '@/lib/credentials/lifetime'
 import { mintClientCredentials } from '@/lib/public-api/client-credentials'
 
+// Scopes a person may mint here. `agents:reply` (the full ApiScope list is in
+// src/lib/public-api/auth.ts) is deliberately absent: it is issued only by
+// registering an external agent, bound to that one agent.
 const scopes = z.enum(['flows:read', 'flows:write', 'flows:run'])
 
 export const GET = withAuthenticatedApi(async (_request, auth) => ({

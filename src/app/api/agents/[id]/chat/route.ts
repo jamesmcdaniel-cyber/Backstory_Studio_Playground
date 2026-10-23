@@ -18,6 +18,7 @@ import { assertAiCallAllowed } from '@/lib/usage/ai-guard'
 import { recordTokenUsage } from '@/lib/usage/budget'
 import { buildChatLedgerContext } from '@/lib/usage/chat-ledger'
 import { injectTraceContext } from '@/lib/observability/otel'
+import { isExternalAgentType } from '@/lib/agents/external/types'
 import {
   agentIdFromRequest,
   requireAgent,
@@ -217,6 +218,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   const model = resolveChatModel(requestedModel, 'assistant')
   const streaming = wantsEventStream(request)
   const agent = await requireAgent(agentId, auth)
+
+  // An external agent has no assistant model in front of it: the message is
+  // the task, and its reply lands in this thread when it arrives.
+  if (isExternalAgentType(agent.agentType)) {
+    const { respondToExternalAgentChat } = await import('./external')
+    const respondExternal = () => respondToExternalAgentChat({ agent, auth, message, requestedSessionId, serialize: (row) => serializeMessage(row) })
+    return streaming ? eventStream(() => respondExternal()) : respondExternal()
+  }
 
   // Provider check, per-user rate limit, and monthly ceiling — BEFORE the model
   // call below. The `agent-run:` limiter further down guards only the spawning

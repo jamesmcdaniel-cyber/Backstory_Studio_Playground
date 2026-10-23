@@ -67,5 +67,8 @@ export const UNGATED_ROUTES: readonly string[] = [
   'v1/flows',                             // workspace API key
   'v1/flows/[id]',                        // workspace API key
   'v1/flows/[id]/run',                    // workspace API key
+  'v1/agents/executions/[id]',            // external agent's agents:reply key, own executions only
+  'v1/agents/executions/[id]/reply',      // agents:reply key + single-use reply token (hashed, consumed atomically)
+  'v1/agents/executions/[id]/progress',   // agents:reply key + the task's live reply token
   'mcp',                                  // workspace API key (MCP server; same admission as v1)
 ]

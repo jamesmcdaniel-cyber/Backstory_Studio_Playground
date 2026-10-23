@@ -1,6 +1,8 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { queueFlowWrite } from '@/lib/flows/flow-write-queue'
+import { ensureWebhookSecret } from '@/components/flows/trigger-editor'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useReducedMotion } from 'motion/react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
@@ -593,6 +595,18 @@ function FlowBuilder() {
   // The flow's updatedAt when we last loaded/saved it — sent on save so the
   // server rejects a stale overwrite (optimistic concurrency, FLOW_STALE_WRITE).
   const baseUpdatedAt = useRef<string | null>(null)
+  // Every write to this flow's row goes through here (see flow-write-queue):
+  // one at a time, and the new base is adopted INSIDE the queue, so the next
+  // write is built with it rather than racing the response parse.
+  const writeFlow = useCallback((send: () => Promise<Response>) => queueFlowWrite(id, async () => {
+    const response = await send()
+    if (response.ok) {
+      const data = await response.clone().json().catch(() => null) as { flow?: { updatedAt?: unknown }; updatedAt?: unknown } | null
+      const updatedAt = data?.flow?.updatedAt ?? data?.updatedAt
+      if (typeof updatedAt === 'string') baseUpdatedAt.current = updatedAt
+    }
+    return response
+  }), [id])
   const applyRemoteGraph = useCallback((incoming: unknown) => {
     // Don't disrupt a read-only version view; ignore malformed payloads.
     if (viewingVersion || !incoming || typeof incoming !== 'object' || !(incoming as FlowGraph).nodes) return
@@ -654,12 +668,12 @@ function FlowBuilder() {
     // absent, which it is until we've loaded).
     if (!loadedOkRef.current || !canEdit || viewingVersion) return
     const suppressAudit = !shouldRecordJamAudit(lastJamAuditAt.current, Date.now())
-    const response = await fetch('/api/flows', {
+    const response = await writeFlow(() => fetch('/api/flows', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       // Graph only: name/description/status keep manual save + the dirty dot.
       body: JSON.stringify({ id, graph: graphRef.current, suppressAudit, ...(baseUpdatedAt.current ? { baseUpdatedAt: baseUpdatedAt.current } : {}) }),
-    })
+    }))
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
       if (data.code === 'FLOW_STALE_WRITE') {
@@ -683,7 +697,7 @@ function FlowBuilder() {
       // reloads between jam participants.
       bus.send('saved', { updatedAt: data.flow.updatedAt })
     }
-  }, [id, canEdit, viewingVersion, bus])
+  }, [id, writeFlow, canEdit, viewingVersion, bus])
   // Debounce: persist 2s after the last graph change (local OR merged remote —
   // the persister persists the whole room's work).
   useEffect(() => {
@@ -1409,14 +1423,14 @@ function FlowBuilder() {
     }
     setSaving(true)
     try {
-      const response = await fetch('/api/flows', {
+      const response = await writeFlow(() => fetch('/api/flows', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         // baseUpdatedAt lets the server reject a stale overwrite if a co-editor
         // saved since we loaded (optimistic concurrency). Status is deliberately
         // NOT sent — publish/unpublish own the lifecycle server-side.
         body: JSON.stringify({ id, name, description, graph, ...(baseUpdatedAt.current ? { baseUpdatedAt: baseUpdatedAt.current } : {}) }),
-      })
+      }))
       if (!response.ok) {
         const data = await response.json().catch(() => ({}))
         if (data.code === 'FLOW_STALE_WRITE') {
@@ -1436,7 +1450,7 @@ function FlowBuilder() {
     } finally {
       setSaving(false)
     }
-  }, [id, name, description, graph, canEdit, external])
+  }, [id, writeFlow, name, description, graph, canEdit, external])
 
   const publish = useCallback(
     async (action: 'publish' | 'revert' | 'unpublish' = 'publish') => {
@@ -1456,11 +1470,20 @@ function FlowBuilder() {
           return
         }
         if (action === 'publish' && !(await save())) return
-        const response = await fetch(`/api/flows/${id}/publish`, {
+        // A webhook flow publishes only with a secret. The trigger editor
+        // auto-mints one, but Publish can beat that mint (the panel closed
+        // early, a slow network): make sure it exists first.
+        const triggerNode = graph.nodes.find((node) => node.type === 'trigger')
+        const triggerType = ((triggerNode?.data as { trigger?: { type?: string } } | undefined)?.trigger?.type)
+        if (action === 'publish' && triggerType === 'webhook') {
+          await ensureWebhookSecret(id, (updatedAt) => { baseUpdatedAt.current = updatedAt })
+        }
+        // Publishing writes the flow row too: queued, and its new base adopted.
+        const response = await writeFlow(() => fetch(`/api/flows/${id}/publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ revert: action === 'revert', unpublish: action === 'unpublish' }),
-        })
+        }))
         const data = await response.json().catch(() => ({}))
         if (!response.ok) {
           // The server re-validates against live agents/connections, so it can
@@ -1486,7 +1509,7 @@ function FlowBuilder() {
         setPublishing(false)
       }
     },
-    [id, save, validation, version, replaceGraph],
+    [id, save, validation, version, replaceGraph, writeFlow, graph.nodes],
   )
 
   const pollRuns = useCallback(() => {
@@ -1589,11 +1612,11 @@ function FlowBuilder() {
   useFlowRunStream(streamRunId, onStreamTick)
 
   const updateSharing = useCallback(async (next: 'shared' | 'view' | 'private') => {
-    const response = await fetch('/api/flows', {
+    const response = await writeFlow(() => fetch('/api/flows', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, visibility: next }),
-    })
+    }))
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
       toast.error('Could not change sharing.')
@@ -1604,7 +1627,7 @@ function FlowBuilder() {
     if (data.flow?.updatedAt) baseUpdatedAt.current = data.flow.updatedAt
     setVisibility(next)
     toast.success(next === 'shared' ? 'Everyone in your workspace can edit this flow.' : next === 'view' ? 'Everyone can view and run it — only you can edit.' : 'Only you can see this flow now.')
-  }, [id])
+  }, [id, writeFlow])
 
   const openFlowSettings = useCallback(() => {
     setSettingsDraft({ name, description, icon, folder, ...flowSettings })
@@ -1619,7 +1642,7 @@ function FlowBuilder() {
     }
     setSaving(true)
     try {
-      const response = await fetch('/api/flows', {
+      const response = await writeFlow(() => fetch('/api/flows', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1646,7 +1669,7 @@ function FlowBuilder() {
           },
           ...(baseUpdatedAt.current ? { baseUpdatedAt: baseUpdatedAt.current } : {}),
         }),
-      })
+      }))
       const data = await response.json().catch(() => ({}))
       if (!response.ok) {
         toast.error(data.error || 'Could not save flow settings.')
@@ -1666,7 +1689,7 @@ function FlowBuilder() {
     } finally {
       setSaving(false)
     }
-  }, [id, settingsDraft, graph])
+  }, [id, writeFlow, settingsDraft, graph])
 
   const rerunFromStep = useCallback(async (runId: string, nodeId: string) => {
     const response = await fetch(`/api/flows/${id}/execute`, {
@@ -1753,18 +1776,18 @@ function FlowBuilder() {
   // Dismiss the persisted import report — the flow keeps its live checker;
   // the historical import record goes away for everyone.
   const clearImportNotes = useCallback(async () => {
-    const response = await fetch('/api/flows', {
+    const response = await writeFlow(() => fetch('/api/flows', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, clearImportNotes: true }),
-    })
+    }))
     if (!response.ok) {
       toast.error('Could not clear the import notes.')
       return
     }
     setImportReport(null)
     closePanel('importNotes')
-  }, [id, closePanel])
+  }, [id, writeFlow, closePanel])
 
   // Node-editor step controls: run through a node ("Execute step") or up to but
   // not including it ("Execute previous nodes"). Both start a partial run whose
@@ -2109,11 +2132,11 @@ function FlowBuilder() {
     try {
       // Non-rotate mint: creates a secret only when none exists; otherwise it
       // is read-only and returns secret: null.
-      const response = await fetch(`/api/flows/${id}/trigger-secret`, {
+      const response = await writeFlow(() => fetch(`/api/flows/${id}/trigger-secret`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rotate: false }),
-      })
+      }))
       const data = await response.json().catch(() => ({}))
       if (!response.ok) return undefined
       if (typeof data.secret !== 'string' || !data.secret) {
@@ -2128,7 +2151,7 @@ function FlowBuilder() {
     } catch {
       return undefined
     }
-  }, [id, graph])
+  }, [id, writeFlow, graph])
 
   // Export for n8n: an importable workflow JSON (structural nodes run; agent/
   // tool steps import as flagged No-Op placeholders — see @/lib/flows/export).

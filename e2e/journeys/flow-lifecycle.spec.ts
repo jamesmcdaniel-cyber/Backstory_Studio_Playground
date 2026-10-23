@@ -44,7 +44,11 @@ test('a flow with a code step is created, runs to success with the runs panel op
   await page.getByRole('menuitem', { name: 'Delete' }).click()
   const confirm = page.getByRole('dialog', { name: 'Delete this flow?' })
   await expect(confirm).toContainText(flowName)
+  // The list drops the row optimistically, before the DELETE lands: wait for
+  // the server's answer, or the check below can race the delete.
+  const deleted = page.waitForResponse((response) => response.request().method() === 'DELETE' && new URL(response.url()).pathname === '/api/flows')
   await confirm.getByRole('button', { name: 'Delete flow' }).click()
+  expect((await deleted).ok(), 'the flow DELETE succeeded').toBe(true)
   await expect(page.getByRole('button', { name: `Actions for ${flowName}` })).toHaveCount(0)
 
   // Gone on the server too, not just from the list's local state.

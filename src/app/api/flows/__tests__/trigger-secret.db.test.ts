@@ -73,6 +73,23 @@ if (TEST_DB) {
     }
   })
 
+  test('two first mints racing (card + drawer editors) leave ONE secret, and it is the one returned', async () => {
+    const s = await seedTestOrg(prisma)
+    try {
+      installTestAuth(s.auth)
+      const flow = await mkFlow(s.organizationId, s.userId)
+      const bodies = await Promise.all(Array.from({ length: 10 }, async () => (await mint(flow.id)).json()))
+      const secrets = bodies.map((b) => b.secret).filter((v): v is string => typeof v === 'string')
+      assert.equal(secrets.length, 1, 'exactly one racing mint creates the secret; the rest see it exists')
+      const row = await prisma.flow.findFirst({ where: { id: flow.id, organizationId: s.organizationId } })
+      const { hashToken } = await import('@/lib/crypto/secrets')
+      assert.equal((row.trigger as Record<string, unknown>).webhookSecretHash, hashToken(secrets[0]), 'the shown secret is the stored one')
+    } finally {
+      await s.cleanup()
+      await prisma.organization.delete({ where: { id: s.organizationId } }).catch(() => {})
+    }
+  })
+
   test('cross-org GET → 404', async () => {
     const owner = await seedTestOrg(prisma)
     const other = await seedTestOrg(prisma)

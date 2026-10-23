@@ -47,20 +47,11 @@ test('publishing a flow reports its version and offers to unpublish', async ({ p
 })
 
 test('a webhook trigger reports itself armed only once the flow is published', async ({ page, workspace }) => {
-  // FIXME (suspected product bug, found 2026-10-22 on a local stack, 3 of 3
-  // attempts): choosing "When an HTTP request is received" auto-mints the
-  // webhook secret (POST /api/flows/[id]/trigger-secret, which bumps
-  // flow.updatedAt). The very next PUT /api/flows (Publish saves first) is
-  // then refused 409 FLOW_STALE_WRITE and the builder reloads ("A teammate
-  // saved changes…"), so the flow never publishes. The server log shows the
-  // pattern behind it: two PUT /api/flows in flight at once (the debounced
-  // graph autosave and the explicit save) carrying the same baseUpdatedAt, so
-  // whichever lands second is "stale" — and the switch adds a third writer,
-  // the auto-mint, sent once per mounted TriggerEditor (inline card and
-  // inspector). The same race makes flow-lifecycle flaky on its first attempt.
-  // Re-enable once the builder serializes its own writes; the steps below
-  // already drive the current UI.
-  test.fixme(true, 'Publishing right after switching to an HTTP trigger is refused FLOW_STALE_WRITE after the webhook-secret auto-mint, and the builder reloads instead of publishing.')
+  // Regression guard: switching to an HTTP trigger auto-mints the webhook
+  // secret (a flow-row write) while autosave and Publish's save also write.
+  // These used to race on one optimistic-lock base and the builder reloaded
+  // ("A teammate saved changes…") instead of publishing. Writes now go through
+  // one per-flow queue (src/lib/flows/flow-write-queue.ts).
   const flowName = `${E2E_FLOW_PREFIX}arm ${Date.now()}`
   await createBlankFlow(page)
   await renameFlow(page, flowName)

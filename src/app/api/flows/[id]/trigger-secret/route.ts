@@ -32,30 +32,41 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (!id) throw new ApiError('Flow id is required')
   const { rotate } = z.object({ rotate: z.boolean().default(false) }).parse(await request.json().catch(() => ({})))
 
-  const flow = await prisma.flow.findFirst({
-    where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },
-  })
-  if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
-  assertFlowEditable(flow, auth.dbUser.id)
-
-  const trigger = (flow.trigger && typeof flow.trigger === 'object' && !Array.isArray(flow.trigger) ? flow.trigger : {}) as Record<string, unknown>
-  const hasSecret = typeof trigger.webhookSecretHash === 'string'
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || ''
-  const base = {
-    success: true as const,
-    url: `${baseUrl}/api/flows/${flow.id}/trigger`,
-    usage: 'POST with header "x-trigger-secret: <secret>". Send {"input": ...} or any JSON body as the flow input.',
-  }
+  // Compare-and-set on updatedAt. Two editors open on one flow (the step card
+  // and the drawer) each auto-mint when they see no secret; a plain
+  // read-then-write let both write, the second secret replaced the first, and
+  // the editor showing the first one displayed a secret that no longer worked.
+  // Now a mint that loses the race re-reads and finds the secret exists.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const flow = await prisma.flow.findFirst({
+      where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },
+    })
+    if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
+    assertFlowEditable(flow, auth.dbUser.id)
 
-  if (hasSecret && !rotate) {
-    return { ...base, hasSecret: true, secret: null }
-  }
+    const trigger = (flow.trigger && typeof flow.trigger === 'object' && !Array.isArray(flow.trigger) ? flow.trigger : {}) as Record<string, unknown>
+    const hasSecret = typeof trigger.webhookSecretHash === 'string'
+    const base = {
+      success: true as const,
+      url: `${baseUrl}/api/flows/${flow.id}/trigger`,
+      usage: 'POST with header "x-trigger-secret: <secret>". Send {"input": ...} or any JSON body as the flow input.',
+    }
 
-  const secret = randomBytes(24).toString('base64url')
-  const updated = await prisma.flow.update({
-    where: { id: flow.id, organizationId: auth.organizationId },
-    data: { trigger: { ...trigger, type: 'webhook', webhookSecretHash: hashToken(secret) } },
-    select: { updatedAt: true },
-  })
-  return { ...base, hasSecret: true, secret, updatedAt: updated.updatedAt }
+    if (hasSecret && !rotate) {
+      return { ...base, hasSecret: true, secret: null }
+    }
+
+    const secret = randomBytes(24).toString('base64url')
+    const written = await prisma.flow.updateMany({
+      where: { id: flow.id, organizationId: auth.organizationId, updatedAt: flow.updatedAt },
+      data: { trigger: { ...trigger, type: 'webhook', webhookSecretHash: hashToken(secret) } },
+    })
+    if (written.count === 1) {
+      const updated = await prisma.flow.findFirst({ where: { id: flow.id, organizationId: auth.organizationId }, select: { updatedAt: true } })
+      return { ...base, hasSecret: true, secret, updatedAt: updated?.updatedAt }
+    }
+    // Someone wrote the flow between our read and write: read again.
+  }
+  throw new ApiError('The flow is being edited right now — try again.', 409, 'FLOW_BUSY')
 }, { permission: 'flow.write' })

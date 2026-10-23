@@ -23,6 +23,52 @@ import { DataTree } from '@/components/flows/data-tree'
 import { buildDataTree } from '@/lib/flows/datatree'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
+import { queueFlowWrite } from '@/lib/flows/flow-write-queue'
+type MintResult = { ok: boolean; data: { url?: string; secret?: string | null; updatedAt?: string; error?: string } }
+const autoMints = new Map<string, Promise<MintResult>>()
+// An auto-minted secret, kept for this tab: the mint can finish after the
+// editor that started it closed, and the plaintext is shown only once — so the
+// next editor opened on the flow shows it instead of it being lost.
+const recentSecrets = new Map<string, { url: string; secret: string }>()
+function sharedAutoMint(flowId: string, send: () => Promise<MintResult>): Promise<MintResult> {
+  const existing = autoMints.get(flowId)
+  if (existing) return existing
+  const mint = send().then((result) => {
+    if (result.ok && result.data.secret) recentSecrets.set(flowId, { url: String(result.data.url || ''), secret: result.data.secret })
+    return result
+  })
+  autoMints.set(flowId, mint)
+  void mint.finally(() => { if (autoMints.get(flowId) === mint) autoMints.delete(flowId) })
+  return mint
+}
+
+/** POST a mint (or rotate) through the flow's write queue, adopting the new base inside it. */
+function postMint(flowId: string, rotate: boolean, onPersisted?: (updatedAt: string) => void): Promise<MintResult> {
+  return queueFlowWrite(flowId, async () => {
+    const response = await fetch(`/api/flows/${flowId}/trigger-secret`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rotate }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (response.ok && typeof data.updatedAt === 'string') onPersisted?.(data.updatedAt)
+    return { ok: response.ok, data }
+  })
+}
+
+/**
+ * Make sure a webhook flow has its secret before something depends on it
+ * (Publish refuses a webhook flow without one). Shares the editors' auto-mint,
+ * so it never creates a second secret, and the plaintext stays available to
+ * the next editor opened on the flow.
+ */
+export async function ensureWebhookSecret(flowId: string, onPersisted?: (updatedAt: string) => void): Promise<void> {
+  const status = await fetch(`/api/flows/${flowId}/trigger-secret`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+  if (!status?.success || status.hasSecret) return
+  const result = await sharedAutoMint(flowId, () => postMint(flowId, false, onPersisted))
+  if (result.ok && result.data.secret) toast.success('Webhook secret created — open the trigger to copy it; it is shown only once.', { id: `webhook-secret-${flowId}` })
+}
+
 
 export type TriggerData = {
   type?: 'manual' | 'schedule' | 'webhook' | 'form' | 'signal' | 'poll' | 'activity' | 'slack'
@@ -161,6 +207,8 @@ export function TriggerEditor({
   // yet, mint one automatically so the webhook is ready without a button click;
   // the ref guards against double-minting from Strict Mode's twin effect runs.
   const autoMintStarted = useRef(false)
+  const typeRef = useRef(type)
+  typeRef.current = type
   useEffect(() => {
     if (!flowId) return
     if (type !== 'webhook') return
@@ -168,11 +216,20 @@ export function TriggerEditor({
     fetch(`/api/flows/${flowId}/trigger-secret`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (!alive || !d?.success) return
-        // Never clobber a mint that finished while this GET was in flight —
-        // the plaintext secret is shown exactly once and is unrecoverable.
-        setWebhook((prev) => (prev?.secret ? prev : { url: d.url, secret: null, hasSecret: d.hasSecret }))
-        if (!d.hasSecret && !autoMintStarted.current) {
+        if (!d?.success) return
+        if (alive) {
+          // Never clobber a mint that finished while this GET was in flight —
+          // the plaintext secret is shown exactly once and is unrecoverable.
+          const remembered = recentSecrets.get(flowId)
+          setWebhook((prev) => (prev?.secret
+            ? prev
+            : remembered ? { url: remembered.url || d.url, secret: remembered.secret, hasSecret: true } : { url: d.url, secret: null, hasSecret: d.hasSecret }))
+        }
+        // Mint even when this editor has already closed: switching to an HTTP
+        // trigger and closing the panel before this GET answered used to leave
+        // the flow with no secret, and publish then refused it. Not when the
+        // trigger has since changed type — the server mint sets the webhook type.
+        if (!d.hasSecret && !autoMintStarted.current && typeRef.current === 'webhook') {
           autoMintStarted.current = true
           void mintWebhook(false, { auto: true })
         }
@@ -316,21 +373,19 @@ export function TriggerEditor({
     }
     setMinting(true)
     try {
-      const response = await fetch(`/api/flows/${flowId}/trigger-secret`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rotate }),
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok) {
+      const send = () => postMint(flowId, rotate, onPersisted)
+      // The trigger can be open twice (step card + drawer); both auto-mint on
+      // seeing no secret. Share one mint per flow so both show the same secret.
+      const { ok, data } = auto && !rotate ? await sharedAutoMint(flowId, send) : await send()
+      if (!ok) {
         // The auto-mint is best-effort (e.g. the flow may not be editable);
         // surface errors only for an explicit user action.
         if (!auto) toast.error(data.error || 'Could not create the webhook URL.')
         return
       }
-      setWebhook({ url: data.url, secret: data.secret, hasSecret: true })
-      if (typeof data.updatedAt === 'string') onPersisted?.(data.updatedAt)
-      if (data.secret) toast.success('Webhook secret created — copy it now; it is shown only once.')
+      setWebhook({ url: String(data.url ?? ""), secret: data.secret ?? null, hasSecret: true })
+      if (data.secret && !auto) toast.success('Webhook secret created — copy it now; it is shown only once.')
+      else if (data.secret) toast.success('Webhook secret created — copy it now; it is shown only once.', { id: `webhook-secret-${flowId}` })
     } finally {
       setMinting(false)
     }

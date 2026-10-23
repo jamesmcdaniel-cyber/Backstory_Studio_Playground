@@ -220,3 +220,54 @@ test('activity trigger: toggling an event-type chip writes through onChange', as
     cleanup()
   }
 })
+
+test('the trigger open twice (card + drawer) mints ONE secret and both show it', async () => {
+  const realFetch = globalThis.fetch
+  let posts = 0
+  globalThis.fetch = (async (url: unknown, init?: { method?: string }) => {
+    if (init?.method === 'POST') {
+      posts += 1
+      return { ok: true, json: async () => ({ success: true, hasSecret: true, secret: `minted-${posts}`, url: 'https://app.example/api/flows/f9/trigger', updatedAt: '2026-10-22T12:00:00.000Z' }) }
+    }
+    return { ok: true, json: async () => ({ success: true, hasSecret: false, url: 'https://app.example/api/flows/f9/trigger' }) }
+  }) as unknown as typeof fetch
+  try {
+    render(React.createElement(React.Fragment, null,
+      React.createElement(TriggerEditor, { flowId: 'f9', trigger: { type: 'webhook' }, onChange: () => {}, published: true }),
+      React.createElement(TriggerEditor, { flowId: 'f9', trigger: { type: 'webhook' }, onChange: () => {}, published: true }),
+    ))
+    const shown = await screen.findAllByText('x-trigger-secret: minted-1')
+    assert.equal(shown.length, 2, 'both editors show the one secret that was stored')
+    assert.equal(posts, 1)
+  } finally {
+    globalThis.fetch = realFetch
+    cleanup()
+  }
+})
+
+test('closing the editor before the status check answers still mints, and the next editor shows the secret', async () => {
+  const realFetch = globalThis.fetch
+  let releaseGet: () => void = () => {}
+  let posts = 0
+  globalThis.fetch = (async (url: unknown, init?: { method?: string }) => {
+    if (init?.method === 'POST') {
+      posts += 1
+      return { ok: true, json: async () => ({ success: true, hasSecret: true, secret: 'late-mint', url: 'https://app.example/api/flows/f10/trigger', updatedAt: '2026-10-22T12:00:00.000Z' }) }
+    }
+    // The first status check is slow (a cold dev route, a slow network).
+    if (posts === 0) await new Promise<void>((resolve) => { releaseGet = resolve })
+    return { ok: true, json: async () => ({ success: true, hasSecret: posts > 0, url: 'https://app.example/api/flows/f10/trigger' }) }
+  }) as unknown as typeof fetch
+  try {
+    const first = render(React.createElement(TriggerEditor, { flowId: 'f10', trigger: { type: 'webhook' }, onChange: () => {}, published: false }))
+    first.unmount() // the person closes the panel before the GET answers
+    releaseGet()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(posts, 1, 'the mint still happened, so publish will not be refused')
+    render(React.createElement(TriggerEditor, { flowId: 'f10', trigger: { type: 'webhook' }, onChange: () => {}, published: false }))
+    await screen.findByText('x-trigger-secret: late-mint')
+  } finally {
+    globalThis.fetch = realFetch
+    cleanup()
+  }
+})

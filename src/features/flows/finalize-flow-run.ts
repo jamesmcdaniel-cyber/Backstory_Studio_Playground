@@ -10,6 +10,7 @@ import { truncateWithMarker } from '@/lib/flows/truncate'
 import { parseFlowSettings } from '@/lib/flows/settings'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { jsonValue } from './run-step-persistence'
+import { settleRunApprovals } from './approval-settle'
 import { createQueue, QUEUE_NAMES } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import type { FlowExecutionJob } from './execute-flow'
@@ -179,6 +180,25 @@ export async function finalizeFlowRun(
   // Final realtime nudge on the terminal/waiting status, so the builder settles
   // immediately instead of on the next poll.
   trackDetached(broadcastFlowRunTick(run.id, { status }))
+  // Approvals follow the run: a settled run strands none, and a waiting run
+  // whose approvals were all decided while it was still running resumes now
+  // (decideApproval only resumes a run that is already waiting).
+  const settled = await settleRunApprovals({ organizationId: job.organizationId, runId: run.id, status }).catch((error) => {
+    apiLogger.error('flow approval settle failed', { flowRunId: run.id, error: error instanceof Error ? error.message : String(error) })
+    return {} as { resumeReply?: string }
+  })
+  if (settled.resumeReply) {
+    await (await flowEngine()).dispatchDetachedFlowExecution({
+      flowId: flow.id,
+      organizationId: job.organizationId,
+      userId: run.userId ?? job.userId,
+      flowRunId: run.id,
+      reply: settled.resumeReply,
+      usePublished: job.usePublished,
+    }).catch((error) => {
+      apiLogger.error('flow approval resume failed', { flowRunId: run.id, error: error instanceof Error ? error.message : String(error) })
+    })
+  }
   if (resumeAt && !inlineExecution) {
     // Precise durable wakeup. The minute scanner remains crash recovery if
     // enqueue fails after the database commit. Both carry the same occurrence

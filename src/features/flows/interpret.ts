@@ -16,6 +16,7 @@ import { inBandErrorWarning } from './tool-output'
 import { bindFormFiles } from '@/lib/flows/file-ref'
 import { flowItemsFromValue, type FlowItem } from '@/lib/flows/items'
 import { runSecurityOp, SECURITY_DATA_OPS, type SecurityDataOp } from '@/lib/flows/security-ops'
+import { isRejectedItemOutput, rejectedItemsWarning } from '@/lib/flows/item-approval'
 
 export type StepOutcome = {
   nodeId: string
@@ -65,6 +66,12 @@ export type RunAgentResult = {
   error?: string
   waiting?: { status: string; question?: string }
   /**
+   * The step decided this ITEM goes no further (an approver rejected it inside
+   * a per-item container). The adapter has already recorded the row; the
+   * interpreter drops the item from the container's output.
+   */
+  dropped?: { reason: 'approval_rejected'; output?: unknown }
+  /**
    * Retry evidence: total calls made (including the final one) and one
    * `"attempt i/max failed: …"` string per failed attempt, in order — only
    * `runAgentWithReliability` populates these; a plain `opts.runAgent` result
@@ -98,7 +105,16 @@ export type RunAgentFn = (node: {
 // passes through unresolved, same as tool/http's retries/timeoutMs.
 // `resume` marks the node a paused run is re-entering (e.g. after an approval
 // decision) so the adapter can consume the decision instead of re-executing.
-export type RunActionFn = (node: { id: string; kind: 'tool' | 'http' | 'ai' | 'subflow' | 'knowledge' | 'code'; config: Record<string, unknown>; resume?: boolean }) => Promise<RunAgentResult>
+// `item` is set when the step runs inside a per-item container (loop body or
+// a perItem step): the current item's position and value, so an approval it
+// queues can name the item it is for.
+export type RunActionFn = (node: {
+  id: string
+  kind: 'tool' | 'http' | 'ai' | 'subflow' | 'knowledge' | 'code'
+  config: Record<string, unknown>
+  resume?: boolean
+  item?: { index: number; count: number; value: unknown }
+}) => Promise<RunAgentResult>
 export type InterpretResult = {
   status: 'succeeded' | 'failed' | 'waiting'
   steps: StepOutcome[]
@@ -187,7 +203,8 @@ type NodeResult = (
   | { kind: 'fail'; error: string }
   | { kind: 'pause'; nodeId: string; question?: string; resumeAt?: string; waitKind?: 'timer' | 'webhook' }
   // A filter that didn't pass: drops the current loop item, or ends the main chain.
-  | { kind: 'drop' }
+  // `reason` marks an item an approver rejected (counted in the container's warning).
+  | { kind: 'drop'; reason?: 'approval_rejected' }
   // A step with onError:'route' that FAILED — its output is the `{ error, input }`
   // pass-through object, and the main-chain walk follows the node's labeled
   // 'error' edge (Error Shield). Inside a container body (no branch edges) this
@@ -673,6 +690,11 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         emit({ nodeId: node.id, status: output ? 'succeeded' : 'skipped', output, ...(provenanceLogs ? { logs: provenanceLogs } : {}) })
         return output ? { kind: 'ok', output: undefined } : { kind: 'drop' }
       }
+      // An item an approver rejected stays dropped on every later replay.
+      if (isRejectedItemOutput(output)) {
+        emit({ nodeId: node.id, status: 'skipped', output })
+        return { kind: 'drop', reason: 'approval_rejected' }
+      }
       const replayItems = opts.completedItems?.[stepKey]
       ctx.step[node.id] = { output }
       emit({ nodeId: node.id, status: 'skipped', output, ...(replayItems ? { items: replayItems } : {}), ...(provenanceLogs ? { logs: provenanceLogs } : {}) })
@@ -742,8 +764,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       }
       ctx.step[node.id] = { output: outputs }
       const failedItems = childResults.filter((res) => res.kind === 'fail').length
-      const aggregateWarning = itemPolicyWarning(policy, failedItems, items.length)
-      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output: outputs, ...(aggregateWarning ? { warnings: [aggregateWarning] } : {}) })
+      const rejectedItems = childResults.filter((res) => res.kind === 'drop' && res.reason === 'approval_rejected').length
+      const aggregateWarnings = [itemPolicyWarning(policy, failedItems, items.length), rejectedItemsWarning(rejectedItems, items.length)].filter((w): w is string => Boolean(w))
+      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output: outputs, ...(aggregateWarnings.length ? { warnings: aggregateWarnings } : {}) })
       return { kind: 'ok', output: outputs }
     }
 
@@ -1165,12 +1188,24 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       const broken = missingTokenFailure(config) ?? unresolvedReferenceFailure(config)
       if (broken) return broken
       const res: RunAgentResult = opts.runAction
-        ? await opts.runAction({ id: stepKey, kind: node.type, config, resume: opts.resumeNodeId === stepKey })
+        ? await opts.runAction({
+            id: stepKey,
+            kind: node.type,
+            config,
+            resume: opts.resumeNodeId === stepKey,
+            ...(ctx.loop ? { item: { index: ctx.loop.index, count: ctx.loop.count, value: ctx.item } } : {}),
+          })
         : { error: `${node.type} steps are not supported in this runtime.` }
       if (res.waiting) {
-        // A write tool queued for approval pauses the run, same as an agent step.
+        // A write tool queued for approval pauses — inside a per-item
+        // container only THIS item; its siblings run on (see item-approval.ts).
         emit({ nodeId: node.id, status: 'waiting' })
         return { kind: 'pause', nodeId: stepKey, question: res.waiting.question }
+      }
+      if (res.dropped) {
+        // An approver rejected this item: it goes no further in its container.
+        emit({ nodeId: node.id, status: 'skipped', output: res.dropped.output })
+        return { kind: 'drop', reason: res.dropped.reason }
       }
       if (res.error) {
         const mode = node.data.onError ?? 'stop'
@@ -1417,8 +1452,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         .map((r) => (policy === 'collect' && r.control?.kind === 'fail' ? { error: r.control.error } : r.output))
       ctx.step[node.id] = { output }
       const failedIterations = iterations.filter((r) => r.control?.kind === 'fail').length
-      const loopWarning = itemPolicyWarning(policy, failedIterations, items.length)
-      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output, ...(loopWarning ? { warnings: [loopWarning] } : {}) })
+      const rejectedIterations = iterations.filter((r) => r.control?.kind === 'drop' && r.control.reason === 'approval_rejected').length
+      const loopWarnings = [itemPolicyWarning(policy, failedIterations, items.length), rejectedItemsWarning(rejectedIterations, items.length)].filter((w): w is string => Boolean(w))
+      emit({ nodeId: node.id, status: 'succeeded', input: { items }, output, ...(loopWarnings.length ? { warnings: loopWarnings } : {}) })
       return { kind: 'ok', output }
     }
 

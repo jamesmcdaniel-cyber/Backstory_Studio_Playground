@@ -1,10 +1,11 @@
 import { prisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
+import { approvalItemOf } from '@/lib/flows/item-approval'
 
 // Where an approval came from, resolved from its ambiguous executionId (which
 // holds EITHER an AgentExecution id OR a FlowRun id — no discriminator on the
 // row). Resolved per page via two indexed IN-queries, both org-scoped.
-type ApprovalSource = { kind: 'flow'; flowId: string } | { kind: 'agent'; agentId: string | null } | null
+type ApprovalSource = { kind: 'flow'; flowId: string; flowName: string } | { kind: 'agent'; agentId: string | null } | null
 
 const DEFAULT_TAKE = 50
 const MAX_TAKE = 100
@@ -18,6 +19,9 @@ function intParam(value: string | null, fallback: number): number {
 //   status=a,b   comma-separated set of statuses (default: pending)
 //   skip/take    offset pagination, newest-first; take capped at 100
 // Response: { success, approvals, hasMore } — hasMore drives "Load more".
+// Each approval carries `item` ({ index, count, label }) when a flow step in a
+// per-item container asked for it, so the inbox can name the item and group a
+// run's approvals together (they share `executionId`).
 export const GET = withAuthenticatedApi(async (request, auth) => {
   const params = request.nextUrl.searchParams
   const statusList = (params.get('status') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
@@ -32,7 +36,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     orderBy: { createdAt: 'desc' },
     skip,
     take: take + 1,
-    select: { id: true, tool: true, summary: true, status: true, createdAt: true, executionId: true },
+    select: { id: true, tool: true, summary: true, status: true, createdAt: true, executionId: true, payload: true },
   })
   const hasMore = page.length > take
   const rows = hasMore ? page.slice(0, take) : page
@@ -42,7 +46,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
     ? await Promise.all([
         prisma.flowRun.findMany({
           where: { id: { in: executionIds }, organizationId: auth.organizationId },
-          select: { id: true, flowId: true },
+          select: { id: true, flowId: true, flow: { select: { name: true } } },
         }),
         prisma.agentExecution.findMany({
           where: { id: { in: executionIds }, organizationId: auth.organizationId },
@@ -50,17 +54,18 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
         }),
       ])
     : [[], []]
-  const flowIdByRunId = new Map(flowRuns.map((run) => [run.id, run.flowId]))
+  const flowByRunId = new Map(flowRuns.map((run) => [run.id, { flowId: run.flowId, flowName: run.flow?.name ?? '' }]))
   const agentIdByExecutionId = new Map(agentExecutions.map((execution) => [execution.id, execution.agentTaskId]))
 
-  const approvals = rows.map((row) => {
-    const flowId = flowIdByRunId.get(row.executionId)
-    const source: ApprovalSource = flowId
-      ? { kind: 'flow', flowId }
+  const approvals = rows.map(({ payload, ...row }) => {
+    const flow = flowByRunId.get(row.executionId)
+    const source: ApprovalSource = flow
+      ? { kind: 'flow', ...flow }
       : agentIdByExecutionId.has(row.executionId)
         ? { kind: 'agent', agentId: agentIdByExecutionId.get(row.executionId) ?? null }
         : null
-    return { ...row, source }
+    // Only the item label leaves the payload — never the call's arguments.
+    return { ...row, item: approvalItemOf(payload), source }
   })
   return { success: true, approvals, hasMore }
 }, { permission: 'agent.read' })

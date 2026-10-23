@@ -32,6 +32,7 @@ import { STORED_FILE_MAX_BYTES, readStoredFile, saveStoredFile } from '@/lib/fil
 import { buildAiPrompt, type AiPromptInput } from '@/lib/flows/ai-prompts'
 import { buildFlowAiLedgerContext } from '@/lib/flows/ai-step-ledger'
 import { parseApprovalDecision, shouldConsumeApprovalDecision } from '@/lib/flows/approval-decision'
+import { approvalItem, describeApprovalItem, rejectedItemOutput } from '@/lib/flows/item-approval'
 import { bodyHasFileReference, buildMultipartBody, fileReference } from '@/lib/flows/file-ref'
 import { getByPath, optimizeForAi, pageItems, paginationComplete, setQueryParam } from '@/lib/flows/http-pagination'
 import { flowSideEffectKey, withIdempotencyHeader } from '@/lib/flows/idempotency'
@@ -192,27 +193,61 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
         const { plane, ref } = parseFlowToolConnectionId(connectionId)
         const toolName = String(node.config.toolName)
 
-        // Re-entering a step paused on an approval: the reply carries the
-        // decision (decideApproval already executed an approved write, exactly
-        // as it does for agent runs) — consume it, never re-execute the write.
-        // PER-ITERATION correlated consume: this exact node (`${id}#${index}`
-        // inside a loop) consumes ONLY the decision naming the approval IT
-        // paused on. Another loop iteration's decision falls through here and
-        // re-queues that iteration's own approval below. Each approval id is
-        // unique, so it is consumed by exactly one iteration.
+        // Inside a per-item container: which item this is, so its approval
+        // names it and a rejection drops only it (see item-approval.ts).
+        const item = node.item ? approvalItem(node.item.index, node.item.count, node.item.value) : undefined
+        const approvalQuestion = `Approve ${toolName}${item ? ` for ${describeApprovalItem(item)}` : ''}?`
+
+        // Re-entering a step paused on an approval. The APPROVAL ROW is the
+        // source of truth for its decision — not the reply that woke the run,
+        // which names at most one approval while a per-item container can have
+        // one per item. decideApproval already executed an approved write,
+        // exactly once; this only consumes the outcome. PER-ITERATION: this
+        // exact node (`${id}#${index}`) reads ONLY the approval IT paused on.
         const ownApprovalId = pausedApprovalByNode.get(node.id)
-        if (ownApprovalId && typeof job.reply === 'string') {
-          const decision = parseApprovalDecision(job.reply)
-          if (decision && shouldConsumeApprovalDecision(decision, ownApprovalId)) {
-            if (decision.status === 'approved') {
-              const output = decision.result ?? { status: 'approved', executed: decision.executed === true }
-              await finish({ status: 'succeeded', output })
-              return { output }
+        if (ownApprovalId) {
+          const row = await prisma.approvalRequest.findFirst({
+            where: { id: ownApprovalId, organizationId: job.organizationId },
+            select: { status: true, payload: true },
+          })
+          // Legacy decisions (recorded before outcomes were stored on the row)
+          // still arrive in the reply that resumed the run.
+          const replied = typeof job.reply === 'string' ? parseApprovalDecision(job.reply) : null
+          const correlated = replied && shouldConsumeApprovalDecision(replied, ownApprovalId) ? replied : null
+          const status = row?.status ?? correlated?.status
+          if (status === 'approved') {
+            const outcome = (row?.payload as { outcome?: { executed?: boolean; result?: unknown } } | null)?.outcome
+            const executed = outcome?.executed ?? correlated?.executed === true
+            const output = outcome?.result ?? correlated?.result ?? { status: 'approved', executed }
+            await finish({ status: 'succeeded', output })
+            return { output }
+          }
+          if (status === 'rejected') {
+            if (item) {
+              // Per item: this item is skipped and recorded; its siblings and
+              // the run carry on.
+              const output = rejectedItemOutput(ownApprovalId, item)
+              await finish({ status: 'skipped', output })
+              return { dropped: { reason: 'approval_rejected', output } }
             }
             const message = 'The approver rejected this action.'
             await finish({ status: 'failed', error: message })
             return { error: message }
           }
+          if (status === 'failed') {
+            const message = 'The approved action failed to send. Check the approval for details before retrying.'
+            await finish({ status: 'failed', error: message })
+            return { error: message }
+          }
+          if (status === 'pending' || status === 'approving') {
+            // Still undecided (a resume woke the run for another reason — a
+            // sibling's decision, a worker restart, a duplicate delivery): wait
+            // on the SAME approval. Queueing a fresh one here is how a resume
+            // used to strand the request someone was about to approve.
+            await finish({ status: 'waiting', output: { waiting: { kind: 'approval', approvalId: ownApprovalId, question: approvalQuestion, ...(item ? { item } : {}) } } })
+            return { waiting: { status: 'waiting_for_approval', question: approvalQuestion } }
+          }
+          // superseded / gone: fall through and queue a fresh approval.
         }
 
         // Slack thread-binding (Task 9): a run triggered by a Slack message
@@ -293,19 +328,29 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
             tool: toolName,
             args,
             mcpConnectionId: ref,
+            ...(item ? { item: { ...item, stepKey: node.id } } : {}),
           })
-          const question = `Approve ${toolName}?`
-          await finish({ status: 'waiting', output: { waiting: { kind: 'approval', approvalId: approval.id, question } } })
-          await notify({
-            organizationId: job.organizationId,
-            userId: job.userId,
-            type: 'flow.needs_approval',
-            level: 'action',
-            title: `Flow "${flow.name}" needs approval`,
-            body: `Approve or reject: ${toolName} (run ${run.id})`,
-            executionId: flow.id,
-            link: `/flows/${flow.id}/activity`,
+          const question = approvalQuestion
+          await finish({ status: 'waiting', output: { waiting: { kind: 'approval', approvalId: approval.id, question, ...(item ? { item } : {}) } } })
+          // One notification per run, not one per item: a 200-item loop must
+          // not send 200. The approvals inbox groups the rest under the run.
+          const alreadyPending = await prisma.approvalRequest.count({
+            where: { organizationId: job.organizationId, executionId: run.id, status: 'pending', id: { not: approval.id } },
           })
+          if (!alreadyPending) {
+            await notify({
+              organizationId: job.organizationId,
+              userId: job.userId,
+              type: 'flow.needs_approval',
+              level: 'action',
+              title: `Flow "${flow.name}" needs approval`,
+              body: item
+                ? `Approve or reject ${toolName} for each item (run ${run.id})`
+                : `Approve or reject: ${toolName} (run ${run.id})`,
+              executionId: flow.id,
+              link: '/approvals',
+            })
+          }
           return { waiting: { status: 'waiting_for_approval', question } }
         }
 

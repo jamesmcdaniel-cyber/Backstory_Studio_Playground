@@ -249,6 +249,7 @@ const cases = (): Case[] => [
   { route: 'push/subscribe', method: 'DELETE', run: async () => (await import('../push/subscribe/route')).DELETE(new NextRequest(new URL('http://test/api/push/subscribe?endpoint=https://push.example.test/smoke'), { method: 'DELETE' } as never)) },
 
   { route: 'approvals/[id]', method: 'POST', run: async () => (await import('../approvals/[id]/route')).POST(rq('/api/approvals/x', 'POST', {})) },
+  { route: 'approvals/batch', method: 'POST', run: async () => (await import('../approvals/batch/route')).POST(rq('/api/approvals/batch', 'POST', { ids: ['missing'], decision: 'reject' })) },
   { route: 'executions/[id]', method: 'DELETE', run: async () => (await import('../executions/[id]/route')).DELETE(rq(`/api/executions/${executionId}`, 'DELETE', {})) },
   { route: 'executions/[id]/reply', method: 'POST', run: async () => (await import('../executions/[id]/reply/route')).POST(rq(`/api/executions/${executionId}/reply`, 'POST', {})) },
   { route: 'files', method: 'POST', run: async () => (await import('../files/route')).POST(rq('/api/files', 'POST', {})) },

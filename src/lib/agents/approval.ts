@@ -21,6 +21,7 @@ import { findNangoWriteTool, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-t
 import { detectPiiCategories } from '@/lib/security/pii-egress'
 import { McpToolBlockedError } from '@/lib/mcp/tool-policy'
 import { WarehouseToolClient, isWarehouseProvider, warehouseKindForTool } from '@/lib/warehouse/tools'
+import { describeApprovalItem, type ApprovalItem } from '@/lib/flows/item-approval'
 
 /** Delivery planes, used only to label an approval with a friendly capability. */
 const DELIVERY_PLANE = /^nango:(slack|gmail|salesforce)$/
@@ -81,6 +82,12 @@ export async function createApproval(input: {
    * McpConnection row decideApproval executes the approved call through.
    */
   mcpConnectionId?: string
+  /**
+   * Set when a flow step inside a per-item container asks: WHICH item this
+   * approval is for (shown in the inbox and summary) and the step key that
+   * paused on it. One approval per item; see src/lib/flows/item-approval.ts.
+   */
+  item?: ApprovalItem & { stepKey: string }
 }): Promise<{ id: string }> {
   const capability = capabilityFromProvider(input.provider)
 
@@ -98,7 +105,8 @@ export async function createApproval(input: {
       : []),
     ...(piiCategories.length ? [`carries ${piiCategories.join(', ')}`] : []),
   ]
-  const summary = `${input.tool} (${capability ?? input.provider})${riskNotes.length ? ` — ${riskNotes.join('; ')}` : ''}`
+  const itemNote = input.item ? ` for ${describeApprovalItem(input.item)}` : ''
+  const summary = `${input.tool}${itemNote} (${capability ?? input.provider})${riskNotes.length ? ` — ${riskNotes.join('; ')}` : ''}`
 
   const approval = await prisma.approvalRequest.create({
     data: {
@@ -112,6 +120,7 @@ export async function createApproval(input: {
         args: input.args,
         userId: input.userId,
         ...(input.mcpConnectionId ? { mcpConnectionId: input.mcpConnectionId } : {}),
+        ...(input.item ? { item: input.item } : {}),
         risk: { injectionTainted: input.injectionTainted === true, piiCategories },
       } as never,
       status: 'pending',
@@ -182,6 +191,16 @@ async function flowResumeInfoFor(
     select: { id: true, flowId: true, userId: true, trigger: true },
   })
   if (!run) return undefined
+  // Per-item approvals: the run resumes once, on the LAST decision. While any
+  // of its approvals is still undecided (or mid-execution by another
+  // approver), deciding one only records it — the resume reads every decision
+  // from the rows when it finally runs. Two approvers deciding the last two
+  // concurrently can both see the other settled and both resume; the run's
+  // atomic waiting→running claim lets exactly one through.
+  const undecided = await prisma.approvalRequest.count({
+    where: { organizationId, executionId, status: { in: ['pending', 'approving'] } },
+  })
+  if (undecided > 0) return undefined
   const userId = run.userId ?? fallbackUserId
   if (!userId) return undefined
   const triggerType = (run.trigger as { type?: string } | null)?.type
@@ -321,9 +340,11 @@ export async function decideApproval(input: {
     throw error
   }
 
+  // The outcome rides on the row: a flow run paused on several approvals
+  // resumes once, after the last decision, and reads each item's result here.
   await prisma.approvalRequest.update({
     where: { id: approval.id, organizationId: input.organizationId },
-    data: { status: 'approved' },
+    data: { status: 'approved', payload: { ...(approval.payload as Record<string, unknown>), outcome: { executed, result: storableResult(writeResult) } } as never },
   })
   await recordAudit({
     organizationId: input.organizationId,
@@ -345,6 +366,20 @@ export async function decideApproval(input: {
   const resume = await resumeInfoFor(approval.executionId, input.organizationId, approvedReply)
   const resumeFlow = resume ? undefined : await flowResumeInfoFor(approval.executionId, input.organizationId, approvedReply, payload.userId)
   return { status: 'approved', executed, ...(resume ? { resume } : {}), ...(resumeFlow ? { resumeFlow } : {}) }
+}
+
+/** Largest write result kept on the approval row (the step output carries it on). */
+const OUTCOME_MAX_CHARS = 200_000
+
+function storableResult(result: unknown): unknown {
+  if (result === undefined) return null
+  try {
+    const text = JSON.stringify(result)
+    if (text === undefined) return null
+    return text.length > OUTCOME_MAX_CHARS ? { truncated: true, preview: text.slice(0, 2_000) } : JSON.parse(text)
+  } catch {
+    return null
+  }
 }
 
 /** Report the settled decision for a request another caller already claimed. */

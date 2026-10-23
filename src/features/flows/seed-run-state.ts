@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { ApiError } from '@/lib/server/api-handler'
 import { chooseWaitingReply } from '@/lib/flows/run-waiting'
+import { parseApprovalDecision } from '@/lib/flows/approval-decision'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { parseStateOverrides, resolveOverride } from '@/lib/flows/state-overrides'
 import { REDACTED_AT_REST_WARNING } from '@/lib/flows/run-data-guard'
@@ -110,6 +111,11 @@ export async function seedRunState(params: {
   // branch — pauses SEVERAL iterations at once, so the reply has to say which
   // one it answers (job.replyStepKey).
   const waitingLeaves = new Map<string, { nodeId: string; executionId?: string }>()
+  // Tool steps waiting on an approval. They are answered by the approval ROW
+  // (a decision, read when the step re-enters), never by a typed reply, so they
+  // are not candidates for reply routing: a per-item container can leave one
+  // per item, and counting them would make every reply "ambiguous".
+  const approvalLeaves = new Set<string>()
   let order = 0
   if (resuming) {
     const priorSteps = await prisma.flowRunStep.findMany({ where: { flowRunId: run.id }, orderBy: { order: 'asc' } })
@@ -148,7 +154,10 @@ export async function seedRunState(params: {
         // the later one wins).
         waitingLeaves.set(step.nodeId, { nodeId: step.nodeId, executionId: step.agentExecutionId ?? undefined })
         const approvalId = (step.output as { waiting?: { approvalId?: string } } | null)?.waiting?.approvalId
-        if (typeof approvalId === 'string' && approvalId) pausedApprovalByNode.set(step.nodeId, approvalId)
+        if (typeof approvalId === 'string' && approvalId) {
+          pausedApprovalByNode.set(step.nodeId, approvalId)
+          if (baseType === 'tool') approvalLeaves.add(step.nodeId)
+        }
         const childRunId = (step.output as { waiting?: { childRunId?: string } } | null)?.waiting?.childRunId
         if (typeof childRunId === 'string' && childRunId) pausedSubflowRunByNode.set(step.nodeId, childRunId)
       }
@@ -160,7 +169,14 @@ export async function seedRunState(params: {
     // silently would answer the wrong item and resolve the others with someone
     // else's words. Roll the claim back to `waiting` so the run stays
     // answerable, and say what to do.
-    const routed = chooseWaitingReply([...waitingLeaves.values()], job.replyStepKey)
+    // An approval decision (the reply decideApproval resumes with) answers no
+    // typed question — the tool steps read their decisions from the rows — so
+    // it routes nowhere. Anything else is routed among the steps that DO take
+    // a typed reply.
+    const decision = typeof job.reply === 'string' ? parseApprovalDecision(job.reply) : null
+    const isApprovalResume = Boolean(decision?.approvalId && [...approvalLeaves].some((key) => pausedApprovalByNode.get(key) === decision?.approvalId))
+    const replyLeaves = [...waitingLeaves.values()].filter((leaf) => !approvalLeaves.has(leaf.nodeId))
+    const routed = isApprovalResume ? null : chooseWaitingReply(replyLeaves, job.replyStepKey)
     if (routed && 'error' in routed) {
       await prisma.flowRun.updateMany({
         where: { id: run.id, organizationId: job.organizationId, status: 'running' },
@@ -183,8 +199,13 @@ export async function seedRunState(params: {
     // an old pending one must never stay actionable (approving both would run
     // the write twice). decideApproval refuses non-pending requests, so a
     // superseded approval is inert — deciding it just reports its state.
+    // EXCEPT the approvals a waiting step is still paused on: that step
+    // re-attaches to its own approval when it re-enters (run-action-step.ts),
+    // so per-item approvals survive a resume woken by a sibling's decision, a
+    // worker restart or a duplicate delivery instead of being re-queued.
+    const reattached = [...new Set(pausedApprovalByNode.values())]
     await prisma.approvalRequest.updateMany({
-      where: { organizationId: job.organizationId, executionId: run.id, status: 'pending' },
+      where: { organizationId: job.organizationId, executionId: run.id, status: 'pending', ...(reattached.length ? { id: { notIn: reattached } } : {}) },
       data: { status: 'superseded' },
     })
     if (priorSteps.length) order = Math.max(...priorSteps.map((step) => step.order)) + 1

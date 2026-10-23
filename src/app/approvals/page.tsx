@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ArrowUpRight, Check, RefreshCw, ShieldCheck, X } from 'lucide-react'
 import { toast } from 'sonner'
@@ -15,7 +15,10 @@ import { cn } from '@/lib/utils'
 
 // Where the approval came from, resolved server-side from its executionId
 // (which ambiguously holds an AgentExecution id or a FlowRun id).
-type ApprovalSource = { kind: 'flow'; flowId: string } | { kind: 'agent'; agentId: string | null } | null
+type ApprovalSource = { kind: 'flow'; flowId: string; flowName?: string } | { kind: 'agent'; agentId: string | null } | null
+
+/** Which item of a per-item flow step this approval is for (one approval per item). */
+type ApprovalItem = { index: number; count: number; label: string }
 
 type ApprovalRow = {
   id: string
@@ -25,6 +28,24 @@ type ApprovalRow = {
   createdAt: string
   executionId: string
   source: ApprovalSource
+  item?: ApprovalItem | null
+}
+
+/** A run's approvals, shown together: one per item when a flow step asked per item. */
+type RunGroup = { key: string; rows: ApprovalRow[] }
+
+/** Group rows by the run that raised them, keeping the newest-first order of runs. */
+function groupByRun(rows: ApprovalRow[]): RunGroup[] {
+  const groups = new Map<string, ApprovalRow[]>()
+  for (const row of rows) groups.set(row.executionId, [...(groups.get(row.executionId) ?? []), row])
+  return [...groups.entries()].map(([key, members]) => ({
+    key,
+    rows: members.every((row) => row.item) ? [...members].sort((a, b) => (a.item!.index - b.item!.index)) : members,
+  }))
+}
+
+function itemText(item: ApprovalItem): string {
+  return `Item ${item.index + 1} of ${item.count}${item.label ? `: ${item.label}` : ''}`
 }
 
 type Filter = 'pending' | 'decided'
@@ -193,6 +214,148 @@ export default function ApprovalsPage() {
     [decidingId],
   )
 
+  const groups = useMemo(() => groupByRun(rows), [rows])
+  const [batchKey, setBatchKey] = useState<string | null>(null)
+
+  // Approve all / reject all for one run's pending approvals. Each is decided
+  // server-side exactly as a single click would be; the run resumes once.
+  const decideAll = useCallback(
+    async (group: RunGroup, approve: boolean) => {
+      const ids = group.rows.filter((row) => row.status === 'pending').map((row) => row.id)
+      if (!ids.length || batchKey || decidingId) return
+      setBatchKey(`${group.key}:${approve ? 'approve' : 'reject'}`)
+      try {
+        const response = await fetch('/api/approvals/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids, decision: approve ? 'approve' : 'reject' }),
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          toast.error(data.error || 'Could not record your decisions — try again.')
+          return
+        }
+        const results = (data.results ?? []) as Array<{ status: string }>
+        const won = results.filter((result) => result.status === (approve ? 'approved' : 'rejected')).length
+        const failed = results.filter((result) => result.status === 'error').length
+        if (failed) toast.error(`${failed} of ${ids.length} could not be ${approve ? 'approved' : 'rejected'} — check the decided list.`)
+        else if (won < ids.length) toast(`${won} of ${ids.length} ${approve ? 'approved' : 'rejected'}; the rest were already decided.`)
+        else toast.success(approve ? `Approved all ${won}.` : `Rejected all ${won} — those items were skipped.`)
+        setRows((previous) => previous.filter((row) => !ids.includes(row.id)))
+      } finally {
+        setBatchKey(null)
+        setRefreshKey((key) => key + 1)
+      }
+    },
+    [batchKey, decidingId],
+  )
+
+  const renderRow = (row: ApprovalRow, grouped: boolean) => {
+    const provider = providerFromSummary(row.summary)
+    const deciding = decidingId === row.id
+    const href = activityHref(row)
+    return (
+      <TableRow key={row.id}>
+        <TableCell className={cn(grouped && 'pl-8')}>
+          <div className="text-sm font-medium">{humanizeToolName(row.tool, provider ?? undefined)}</div>
+          {row.item && <div className="text-xs text-foreground">{itemText(row.item)}</div>}
+          {provider && <div className="text-xs text-muted-foreground">via {providerLabel(provider)}</div>}
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-sm text-muted-foreground" title={new Date(row.createdAt).toLocaleString()}>
+          {relativeTime(row.createdAt)}
+        </TableCell>
+        <TableCell className="text-right">
+          {row.status === 'pending' ? (
+            <div className="flex justify-end gap-2">
+              <Button
+                size="sm"
+                onClick={() => decide(row, true)}
+                loading={deciding && decidingAction === 'approve'}
+                disabled={decidingId !== null || batchKey !== null}
+                aria-label={row.item ? `Approve ${itemText(row.item)}` : undefined}
+              >
+                {!(deciding && decidingAction === 'approve') && <Check className="mr-1 h-3.5 w-3.5" />}
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => decide(row, false)}
+                loading={deciding && decidingAction === 'reject'}
+                disabled={decidingId !== null || batchKey !== null}
+                aria-label={row.item ? `Reject ${itemText(row.item)}` : undefined}
+              >
+                {!(deciding && decidingAction === 'reject') && <X className="mr-1 h-3.5 w-3.5" />}
+                Reject
+              </Button>
+            </div>
+          ) : (
+            <Badge variant={STATUS_BADGE[row.status] || 'outline'}>
+              {STATUS_LABEL[row.status] || 'Decided'}
+            </Badge>
+          )}
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-right">
+          {href && !grouped && (
+            <Link
+              href={href}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              View activity
+              <ArrowUpRight className="h-3 w-3" />
+            </Link>
+          )}
+        </TableCell>
+      </TableRow>
+    )
+  }
+
+  /** The header row that ties a run's approvals together, with the bulk actions. */
+  const renderGroupHeader = (group: RunGroup) => {
+    const first = group.rows[0]
+    const pending = group.rows.filter((row) => row.status === 'pending').length
+    const href = activityHref(first)
+    const name = first.source?.kind === 'flow' && first.source.flowName ? first.source.flowName : 'Flow run'
+    const busy = batchKey?.startsWith(`${group.key}:`) ? batchKey.split(':')[1] : null
+    return (
+      <TableRow key={`${group.key}:header`} className="bg-muted/40 hover:bg-muted/40">
+        <TableCell colSpan={2}>
+          <div className="text-sm font-semibold">{name}</div>
+          <div className="text-xs text-fg-muted">
+            {pending
+              ? `${pending} of ${group.rows.length} item${group.rows.length === 1 ? '' : 's'} waiting. Items without a decision hold the run; the rest carry on.`
+              : `${group.rows.length} items decided in this run.`}
+          </div>
+        </TableCell>
+        <TableCell className="text-right">
+          {pending > 1 && (
+            <div className="flex justify-end gap-2">
+              <Button size="sm" onClick={() => void decideAll(group, true)} loading={busy === 'approve'} disabled={batchKey !== null || decidingId !== null}>
+                {busy !== 'approve' && <Check className="mr-1 h-3.5 w-3.5" />}
+                Approve all
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void decideAll(group, false)} loading={busy === 'reject'} disabled={batchKey !== null || decidingId !== null}>
+                {busy !== 'reject' && <X className="mr-1 h-3.5 w-3.5" />}
+                Reject all
+              </Button>
+            </div>
+          )}
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-right">
+          {href && (
+            <Link
+              href={href}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              View activity
+              <ArrowUpRight className="h-3 w-3" />
+            </Link>
+          )}
+        </TableCell>
+      </TableRow>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -242,60 +405,17 @@ export default function ApprovalsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((row) => {
-              const provider = providerFromSummary(row.summary)
-              const deciding = decidingId === row.id
-              const href = activityHref(row)
-              return (
-                <TableRow key={row.id}>
-                  <TableCell>
-                    <div className="text-sm font-medium">{humanizeToolName(row.tool, provider ?? undefined)}</div>
-                    {provider && <div className="text-xs text-muted-foreground">via {providerLabel(provider)}</div>}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground" title={new Date(row.createdAt).toLocaleString()}>
-                    {relativeTime(row.createdAt)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {row.status === 'pending' ? (
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => decide(row, true)}
-                          loading={deciding && decidingAction === 'approve'}
-                          disabled={decidingId !== null}
-                        >
-                          {!(deciding && decidingAction === 'approve') && <Check className="mr-1 h-3.5 w-3.5" />}
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => decide(row, false)}
-                          loading={deciding && decidingAction === 'reject'}
-                          disabled={decidingId !== null}
-                        >
-                          {!(deciding && decidingAction === 'reject') && <X className="mr-1 h-3.5 w-3.5" />}
-                          Reject
-                        </Button>
-                      </div>
-                    ) : (
-                      <Badge variant={STATUS_BADGE[row.status] || 'outline'}>
-                        {STATUS_LABEL[row.status] || 'Decided'}
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-right">
-                    {href && (
-                      <Link
-                        href={href}
-                        className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                      >
-                        View activity
-                        <ArrowUpRight className="h-3 w-3" />
-                      </Link>
-                    )}
-                  </TableCell>
-                </TableRow>
+            {groups.map((group) => {
+              // A run with one plain approval reads as before; a run with
+              // per-item approvals (or several) is grouped under its flow.
+              const grouped = group.rows.length > 1 || group.rows.some((row) => row.item)
+              return grouped ? (
+                <Fragment key={group.key}>
+                  {renderGroupHeader(group)}
+                  {group.rows.map((row) => renderRow(row, true))}
+                </Fragment>
+              ) : (
+                renderRow(group.rows[0], false)
               )
             })}
           </TableBody>

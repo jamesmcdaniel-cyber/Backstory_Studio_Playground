@@ -35,6 +35,7 @@ import { DEFAULT_AGENT_MODEL, DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runn
 import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutionManifest } from '@/lib/flows/execution-manifest'
 import { runScopeKey } from '@/lib/flows/side-effect-ledger'
 import { parseFlowSettings } from '@/lib/flows/settings'
+import { settleRunApprovals } from './approval-settle'
 import { injectTraceContext, withExtractedTraceContext, withSpan } from '@/lib/observability/otel'
 
 export type FlowExecutionJob = {
@@ -807,6 +808,8 @@ async function runFlowExecutionInner(
         where: { flowRunId: run.id, status: 'running' },
         data: { status: 'cancelled', finishedAt: new Date() },
       })
+      // A cancelled run's pending approvals must not stay approvable.
+      await settleRunApprovals({ organizationId: job.organizationId, runId: run.id, status: 'cancelled' }).catch(() => undefined)
       return { flowRunId: run.id, status: 'cancelled', output: null }
     }
     throw error

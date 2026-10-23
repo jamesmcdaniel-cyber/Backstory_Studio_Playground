@@ -252,6 +252,21 @@ async function main() {
     ),
   ])
 
+  // An external agent's webhook signing secret (shown once; every task
+  // delivery is signed with it). Stranding it on a retired key would leave the
+  // agent receiving tasks we can no longer sign.
+  results.push([
+    'external_agents.signingSecretCiphertext',
+    await rotateStringColumns(
+      'external_agents',
+      await systemPrisma.externalAgent.findMany({
+        select: { id: true, signingSecretCiphertext: true },
+      }),
+      ['signingSecretCiphertext'],
+      (id, data) => systemPrisma.externalAgent.update({ where: { id }, data }),
+    ),
+  ])
+
   const total = results.reduce<Tally>(
     (sum, [, t]) => ({
       scanned: sum.scanned + t.scanned,

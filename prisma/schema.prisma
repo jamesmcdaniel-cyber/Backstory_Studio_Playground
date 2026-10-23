@@ -97,6 +97,7 @@ model Organization {
   artifactSharedStates           ArtifactSharedState[]
   artifactRenderErrors           ArtifactRenderError[]
   agentActions                   AgentAction[]
+  externalAgents                 ExternalAgent[]
   customSignals                  CustomSignal[]
   pushSubscriptions              PushSubscription[]
   knowledgeDocuments             KnowledgeDocument[]
@@ -582,6 +583,8 @@ model ApiKey {
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   accessTokens ApiAccessToken[]
+  /// Set when this key is an external agent's reply credential (agents:reply).
+  externalAgent ExternalAgent?
 
   @@index([organizationId, revokedAt])
   @@map("api_keys")
@@ -711,6 +714,8 @@ model AgentTask {
   slackChannelBindings SlackChannelBinding[]
   knowledgeCollections AgentKnowledgeCollection[]
   slackCommandBindings SlackCommandBinding[]
+  /// Set when agentType is 'EXTERNAL': where tasks are delivered, and how.
+  external             ExternalAgent?
 
   @@index([organizationId, status])
   @@index([userId])
@@ -1009,6 +1014,13 @@ model AgentExecution {
   /// not on startedAt, so a long healthy run is never failed for its age.
   lastActiveAt     DateTime?
   completedAt      DateTime?
+  /// External agents only: SHA-256 of the single-use reply token sent with the
+  /// task. Plaintext exists only in the signed webhook body; cleared the moment
+  /// a reply (or the timeout, or a delivery failure) settles the run.
+  replyTokenHash      String?
+  /// When the reply token stops working — also the run's reply deadline, which
+  /// the dispatch tick enforces (src/lib/agents/external/settle.ts).
+  replyTokenExpiresAt DateTime? @db.Timestamptz(6)
 
   user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization  Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1025,6 +1037,9 @@ model AgentExecution {
   // Per-org in-flight count (src/lib/queue/org-capacity.ts), read once per
   // scheduler tick to stop one workspace occupying the whole worker pool.
   @@index([organizationId, status])
+  // The external-agent timeout sweep: `status = 'waiting_for_external' AND
+  // replyTokenExpiresAt < now`, across all orgs, once per dispatch tick.
+  @@index([status, replyTokenExpiresAt])
   @@map("agent_executions")
 }
 
@@ -2817,4 +2832,47 @@ model LibrarianChatMessage {
 
   @@index([sessionId, createdAt])
   @@map("librarian_chat_messages")
+}
+
+/// An agent running on someone else's infrastructure (a customer's own LLM
+/// agent), registered as a teammate. Its AgentTask (agentType 'EXTERNAL') is
+/// what the roster, Slack mentions, flow steps and the Assistant see; this row
+/// is how a task reaches it and how its reply is authenticated.
+///
+/// It has NO platform tools: a task carries everything it may see, signed with
+/// the secret below, and it answers through `apiKey` (scope agents:reply, bound
+/// to this agent by the relation) plus a single-use token per task.
+model ExternalAgent {
+  id                      String    @id @default(cuid())
+  organizationId          String    @db.Uuid
+  agentTaskId             String    @unique
+  /// https only; SSRF-checked at registration and again at every delivery.
+  webhookUrl              String
+  /// AES-GCM ciphertext of the HMAC signing secret. The plaintext is shown once,
+  /// at registration and at each rotation. Rotated with ENCRYPTION_KEY
+  /// (scripts/rotate-encryption-key.ts).
+  signingSecretCiphertext String
+  signingSecretRotatedAt  DateTime? @db.Timestamptz(6)
+  /// The reply credential. SetNull: deleting the key leaves the agent
+  /// registered but unable to answer until a new key is issued.
+  apiKeyId                String?   @unique
+  /// Free text: what the registering admin says this agent is for.
+  capabilities            String?   @db.Text
+  /// How long a task waits for a reply before the run fails.
+  replyTimeoutMinutes     Int       @default(60)
+  lastDeliveryAt          DateTime? @db.Timestamptz(6)
+  /// 'delivered' | 'failed'
+  lastDeliveryStatus      String?
+  lastDeliveryError       String?
+  lastReplyAt             DateTime? @db.Timestamptz(6)
+  createdById             String?
+  createdAt               DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime  @updatedAt @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agentTask    AgentTask    @relation(fields: [agentTaskId], references: [id], onDelete: Cascade)
+  apiKey       ApiKey?      @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@map("external_agents")
 }

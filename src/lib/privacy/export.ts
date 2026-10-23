@@ -21,7 +21,7 @@ const OMIT_KEYS = new Set([
   'tokenHash', 'keyHash', 'verificationTokenHash', 'peopleAiWebhookSecret',
   'secretConfig', 'authConfig', 'accessToken', 'refreshToken', 'apiKey',
   'webhookSecretHash', 'shareTokenDigest', 'verificationToken', 'resumeTokenHash',
-  'triggerSecret',
+  'triggerSecret', 'replyTokenHash', 'signingSecretCiphertext',
 ])
 
 /**

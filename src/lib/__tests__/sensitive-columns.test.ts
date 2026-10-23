@@ -49,12 +49,18 @@ const CLASSIFIED: Record<string, Classification> = {
   // anyone else who learns the URL. Never returned by the API — the settings
   // route reports `hasSecret` only.
   'AuditStreamDestination.secret': 'encrypted',
+  // Signs every task delivered to an external agent's webhook. Shown once at
+  // registration/rotation; the external-agent serializer reports only that one
+  // exists and when it was rotated.
+  'ExternalAgent.signingSecretCiphertext': 'encrypted',
 
   // ── One-way hashes; plaintext shown once at creation/rotation ────────────
   'ApiKey.keyHash': 'hash',
   // Hash of the client SECRET on paired keys, of the bearer token on legacy ones.
   'ApiAccessToken.tokenHash': 'hash',
   'FlowRun.resumeTokenHash': 'hash',
+  // The single-use reply token sent with each task to an external agent.
+  'AgentExecution.replyTokenHash': 'hash',
   'Invitation.tokenHash': 'hash',
   'OrganizationDomain.verificationTokenHash': 'hash',
   'ScimToken.tokenHash': 'hash',
@@ -76,6 +82,13 @@ const CLASSIFIED: Record<string, Classification> = {
   // ── Name matches the pattern, carries no secret ──────────────────────────
   'AgentConnector.connectorKey': 'not-secret',
   'AgentExecution.idempotencyKey': 'not-secret',
+  // When the reply token stops working (the run's reply deadline) — a time.
+  'AgentExecution.replyTokenExpiresAt': 'not-secret',
+  // When the signing secret was last replaced — a time.
+  'ExternalAgent.signingSecretRotatedAt': 'not-secret',
+  // A foreign key / relation to the agent's reply ApiKey, not the key itself.
+  'ExternalAgent.apiKeyId': 'not-secret',
+  'ExternalAgent.apiKey': 'not-secret',
   'FlowSideEffect.iterationKey': 'not-secret',
   'FlowSideEffect.scopeKey': 'not-secret',
   'NangoConnection.providerConfigKey': 'not-secret',

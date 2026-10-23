@@ -67,6 +67,7 @@ export const EXCLUDED: Record<string, string> = {
   ApprovalRequest: 'pending approvals reference live executions; a demo must not look decidable',
   CatalogueSubmission: 'catalogue state is platform-global, not workspace scenery',
   TemplateProposal: 'generation pipeline state, regenerated on demand',
+  ExternalAgent: 'a customer\'s real external agent endpoint, its signing secret and its reply API key — a demo copy would send invented tasks to a real system; the agent itself is copied (paused) so the roster still shows it',
   AuditStreamDestination: 'a customer\'s real SIEM endpoint and its signing secret — a demo org copying it would forward invented events to a real security system',
   IntegrationSecret: 'credential material — never enters a demo org',
   HttpCredential: 'credential material — never enters a demo org',
@@ -291,6 +292,9 @@ export async function ensureDemoWorkspace(
         ...anonRow({ ...agent, id, organizationId: demoOrgId }, book),
         userId: owner(agent.userId),
         teammateId: remap(teammateIds, agent.teammateId),
+        // An external agent's endpoint is never copied (see EXCLUDED), so its
+        // clone could only fail every run: it stays on the roster, paused.
+        ...(agent.agentType === 'EXTERNAL' ? { status: 'PAUSED' } : {}),
       }),
     })
   }

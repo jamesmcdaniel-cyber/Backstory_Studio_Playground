@@ -46,7 +46,7 @@ test.describe('HTTP credentials', () => {
     await expect(
       create,
       'no "New credential" button — the test user lacks integration.manage, so this journey cannot be driven',
-    ).toBeVisible({ timeout: 30_000 })
+    ).toBeVisible()
     await create.click()
 
     await expect(page.getByText('Set up HTTP credential')).toBeVisible()
@@ -57,7 +57,7 @@ test.describe('HTTP credentials', () => {
 
     await page.getByRole('button', { name: 'Verify & save' }).click()
 
-    await expect(page.getByText('Credential verified and saved.')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText('Credential verified and saved.')).toBeVisible()
 
     // Our side of the flow, asserted on the wire: the dialog must send the
     // secret it collected, bound to the host it was verified against. A dialog
@@ -89,7 +89,7 @@ test.describe('HTTP credentials', () => {
 
     await page.goto('/credentials')
     const create = page.getByRole('button', { name: 'New credential' })
-    await expect(create).toBeVisible({ timeout: 30_000 })
+    await expect(create).toBeVisible()
     await create.click()
 
     await page.locator('#credential-url').fill('https://api.example.com/v1/me')
@@ -98,7 +98,7 @@ test.describe('HTTP credentials', () => {
     await page.locator('#credential-password').fill('wrong')
     await page.getByRole('button', { name: 'Verify & save' }).click()
 
-    await expect(page.getByText(/rejected these credentials|could not verify/i).first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText(/rejected these credentials|could not verify/i).first()).toBeVisible()
     // The dialog stays open with the user's work intact.
     await expect(page.getByText('Set up HTTP credential')).toBeVisible()
   })
@@ -120,7 +120,7 @@ test('connecting an app account asks for a session token for that integration', 
 
   await page.goto('/integrations')
   const connect = page.getByRole('button', { name: 'Connect', exact: true }).first()
-  const available = await connect.isVisible({ timeout: 30_000 }).catch(() => false)
+  const available = await connect.isVisible().catch(() => false)
   test.skip(
     !available,
     'This deployment exposes no connectable Nango integrations (GET /api/nango/integrations returned none), ' +
@@ -132,6 +132,6 @@ test('connecting an app account asks for a session token for that integration', 
   await expect(
     page.getByText(/Unable to start the connection flow|Unable to connect account/).first(),
     'the connect failure was not reported to the user',
-  ).toBeVisible({ timeout: 30_000 })
+  ).toBeVisible()
   expect(requestedIntegrationId, 'no session token was requested for any integration').toBeTruthy()
 })

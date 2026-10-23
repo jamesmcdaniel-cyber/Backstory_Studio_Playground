@@ -83,3 +83,13 @@ export function seedSkipReason(): string | null {
 export function baseUrl(): string {
   return trimmed('E2E_BASE_URL') ?? 'http://127.0.0.1:3000'
 }
+
+/**
+ * True when the suite targets a laptop stack (`next dev`), which compiles each
+ * page and API route on first request. Drives the patient timeouts in
+ * playwright.config.ts and the route warm-up in auth.setup.ts; a deployed
+ * target gets neither, because there slowness is the regression.
+ */
+export function isLocalTarget(): boolean {
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(baseUrl())
+}

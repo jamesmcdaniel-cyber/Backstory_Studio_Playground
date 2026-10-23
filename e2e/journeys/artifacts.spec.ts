@@ -31,9 +31,12 @@ const ARTIFACT = {
 
 test('an artifact can be found, read, questioned and revised', async ({ page }) => {
   let detail = { ...ARTIFACT }
-  await page.route('**/api/artifacts?**', (route) => route.fulfill({ json: { success: true, artifacts: [{ id: detail.id, kind: detail.kind, title: detail.title, agent: detail.agent, flow: null, versionCount: 2, updatedAt: detail.updatedAt, createdAt: detail.createdAt }] } }))
-  await page.route('**/api/artifacts', (route) => route.fulfill({ json: { success: true, artifacts: [{ id: detail.id, kind: detail.kind, title: detail.title, agent: detail.agent, flow: null, versionCount: 2, updatedAt: detail.updatedAt, createdAt: detail.createdAt }] } }))
-  await page.route(`**/api/artifacts/${ARTIFACT.id}`, (route) => route.fulfill({ json: { success: true, artifact: detail } }))
+  // Matched on the pathname, not a glob: the viewer polls the detail route
+  // with `?since=…`, which a bare glob misses — and `?` in a Playwright glob
+  // is a single-character wildcard, so `**/api/artifacts?**` used to swallow
+  // the detail poll and answer it with the LIST.
+  await page.route((url) => url.pathname === '/api/artifacts', (route) => route.fulfill({ json: { success: true, artifacts: [{ id: detail.id, kind: detail.kind, title: detail.title, agent: detail.agent, flow: null, versionCount: 2, updatedAt: detail.updatedAt, createdAt: detail.createdAt }] } }))
+  await page.route((url) => url.pathname === `/api/artifacts/${ARTIFACT.id}`, (route) => route.fulfill({ json: { success: true, artifact: detail } }))
   await page.route(`**/api/artifacts/${ARTIFACT.id}/versions/*/content`, (route) => {
     const version = route.request().url().includes('/v1/') ? 'one' : 'two'
     return route.fulfill({ contentType: 'text/html', body: `<html><body><h1>Q3 pipeline review, version ${version}</h1></body></html>` })
@@ -41,7 +44,7 @@ test('an artifact can be found, read, questioned and revised', async ({ page }) 
   await page.route(`**/api/artifacts/${ARTIFACT.id}/chat`, async (route) => {
     const body = route.request().postDataJSON() as { message: string; mode: string }
     const now = new Date().toISOString()
-    detail = { ...detail, chat: [...detail.chat, { role: 'user', mode: body.mode, content: body.message, createdAt: now }, { role: 'agent', mode: body.mode, content: '', executionId: 'exec-3', status: 'pending', createdAt: now }] }
+    detail = { ...detail, chat: [...detail.chat, { role: 'user', mode: body.mode, content: body.message, createdAt: now }, { role: 'agent', mode: body.mode, content: '', status: 'pending', createdAt: now }] }
     await route.fulfill({ json: { success: true, artifact: detail } })
     // The next poll finds the answer (and, for a change, the new version).
     const answered = /add|remove|change/i.test(body.message)
@@ -69,12 +72,12 @@ test('an artifact can be found, read, questioned and revised', async ({ page }) 
 
   // One input: the assistant decides whether a message is a question or a change.
   await page.getByRole('tab', { name: /Pipeline analyst/ }).click()
-  await page.getByLabel('Message').fill('Why did win rate rise?')
+  await page.locator('#artifact-message').fill('Why did win rate rise?')
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('Working on it…')).toBeVisible()
   await expect(page.getByText('Win rate rose because')).toBeVisible({ timeout: 20_000 })
 
-  await page.getByLabel('Message').fill('Add a risks section')
+  await page.locator('#artifact-message').fill('Add a risks section')
   await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('Done — a new version is ready.')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByRole('tab', { name: 'History (3)' })).toBeVisible()

@@ -26,11 +26,14 @@
  */
 import { expect, test } from '../support/fixtures'
 import { revokeInvitationsFor } from '../support/seed'
+import { revokeInvitationsByPrefix } from '../support/api'
 
 const INVITE_PREFIX = 'e2e-invitee+'
 
 test('an admin invites a teammate and can revoke the pending invitation', async ({ page, workspace }) => {
   const email = `${INVITE_PREFIX}${Date.now()}@example.com`
+  // Leftovers from a run that died mid-journey would otherwise share the list.
+  await revokeInvitationsByPrefix(page.request, INVITE_PREFIX)
 
   await page.goto('/settings?tab=members')
   const invite = page.getByLabel('Invite by email')
@@ -40,7 +43,7 @@ test('an admin invites a teammate and can revoke the pending invitation', async 
   await expect(
     invite,
     'no invite form — the test user lacks the members.manage permission, so this journey cannot be driven',
-  ).toBeVisible({ timeout: 30_000 })
+  ).toBeVisible()
 
   await invite.fill(email)
   await page.getByRole('button', { name: 'Send invite' }).click()
@@ -49,19 +52,17 @@ test('an admin invites a teammate and can revoke the pending invitation', async 
   // address here means the invitation was actually persisted, not merely
   // appended to local state.
   const row = page.getByText(email, { exact: true })
-  await expect(row, 'the invited address never appeared in the pending list').toBeVisible({ timeout: 30_000 })
+  await expect(row, 'the invited address never appeared in the pending list').toBeVisible()
   await expect(page.getByText(/Pending · (Member|Admin|Viewer|Super admin)/).first()).toBeVisible()
 
   // Revoke through the UI, which is both the cleanup and a second assertion.
-  await page
-    .locator('li, div')
-    .filter({ hasText: email })
-    .getByRole('button', { name: 'Revoke' })
-    .last()
-    .click()
-  await expect(row, 'the revoked invitation is still listed as pending').toBeHidden({ timeout: 30_000 })
+  // Scoped to this invitation's own row: a looser container match can land on
+  // another pending invitation's Revoke.
+  await page.getByRole('listitem').filter({ hasText: email }).getByRole('button', { name: 'Revoke' }).click()
+  await expect(row, 'the revoked invitation is still listed as pending').toBeHidden()
 
   await revokeInvitationsFor(workspace.organizationId, INVITE_PREFIX)
+  await revokeInvitationsByPrefix(page.request, INVITE_PREFIX)
 })
 
 test('an invitation link tells the recipient which workspace they were invited to', async ({ page }) => {
@@ -79,7 +80,7 @@ test('an invitation link tells the recipient which workspace they were invited t
 
   // The recipient's two questions — which workspace, and as what — must both
   // be answered before they are asked to click anything.
-  await expect(page.getByText('Join Northwind Labs').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('Join Northwind Labs').first()).toBeVisible()
   await expect(page.getByText(/as a member/i)).toBeVisible()
 })
 
@@ -92,6 +93,6 @@ test('an expired or unknown invitation says so instead of failing silently', asy
 
   await page.goto('/invite/e2e-expired-token')
 
-  await expect(page.getByText('Invitation not found')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('Invitation not found')).toBeVisible()
   await expect(page.getByText('This invitation is invalid or has expired. Ask your admin to send a new one.')).toBeVisible()
 })

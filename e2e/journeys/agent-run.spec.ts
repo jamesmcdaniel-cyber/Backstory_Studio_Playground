@@ -25,11 +25,20 @@
  * Stubbing also keeps the suite from spending real model credits on every pull
  * request, which a live run would.
  */
+import type { Page } from '@playwright/test'
 import { expect, test } from '../support/fixtures'
+import { deleteAgentsByPrefix } from '../support/api'
 
 const AGENT_PREFIX = 'E2E agent '
 
-async function createAgent(page: import('@playwright/test').Page, title: string): Promise<void> {
+// Agents are soft-deleted through the API afterwards, so reruns do not pile
+// them up in the workspace (or in the sidebar every other journey renders).
+test.afterEach(async ({ page }) => {
+  // Best effort: the next run sweeps the same prefix if this one cannot.
+  await deleteAgentsByPrefix(page.request, AGENT_PREFIX).catch(() => undefined)
+})
+
+async function createAgent(page: Page, title: string): Promise<void> {
   await page.goto('/agents')
   await page.getByRole('button', { name: 'New agent' }).first().click()
   await page.getByRole('button', { name: 'Set up manually' }).click()
@@ -38,10 +47,16 @@ async function createAgent(page: import('@playwright/test').Page, title: string)
   await page.locator('#agent-instructions').fill('Reply with a single word: acknowledged.')
   await page.getByRole('button', { name: 'Create agent' }).click()
 
+  // Creating opens the agent's own workspace, with it selected.
   await expect(
-    page.getByRole('button', { name: `Configure ${title}` }),
-    'the created agent never appeared on the roster',
-  ).toBeVisible({ timeout: 30_000 })
+    page.getByRole('combobox', { name: 'Select agent' }),
+    'the created agent never opened',
+  ).toContainText(title)
+}
+
+/** The workspace header's Run button (the sidebar carries one with the same name). */
+function runButton(page: Page, title: string) {
+  return page.locator('main').getByRole('button', { name: `Run ${title}` })
 }
 
 test('an agent can be created, started, and reports that it ran', async ({ page }) => {
@@ -58,12 +73,12 @@ test('an agent can be created, started, and reports that it ran', async ({ page 
   })
 
   await createAgent(page, title)
-  await page.getByRole('button', { name: `Run ${title}` }).click()
+  await runButton(page, title).click()
 
   await expect(
     page.getByText(`${title} ran`),
     'starting the agent did not report a completed run to the user',
-  ).toBeVisible({ timeout: 30_000 })
+  ).toBeVisible()
   expect(executed, 'the run button never called the execute route').toBe(true)
 })
 
@@ -82,7 +97,7 @@ test('an agent run that fails says so instead of appearing to succeed', async ({
   })
 
   await createAgent(page, title)
-  await page.getByRole('button', { name: `Run ${title}` }).click()
+  await runButton(page, title).click()
 
-  await expect(page.getByText(/Agent run failed|Run failed/).first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText(/Agent run failed|Run failed/).first()).toBeVisible()
 })

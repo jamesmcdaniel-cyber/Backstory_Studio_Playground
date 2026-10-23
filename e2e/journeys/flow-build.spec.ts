@@ -10,7 +10,7 @@
  * user's work the moment they navigate — which is the one bug a build journey
  * exists to catch, and the one a "the step appeared" assertion cannot see.
  */
-import { E2E_FLOW_PREFIX, createBlankFlow, expect, renameFlow, test } from '../support/fixtures'
+import { E2E_FLOW_PREFIX, createBlankFlow, expect, flowNameField, renameFlow, test } from '../support/fixtures'
 import { addComposeStep, configureComposeInput, inspector, renameStep, saveFlow } from '../support/builder'
 import { deleteFlowsNamed } from '../support/seed'
 
@@ -22,7 +22,7 @@ test('a step added, configured, and saved survives a reload', async ({ page, wor
   await renameFlow(page, flowName)
 
   await addComposeStep(page)
-  await expect(inspector(page).getByRole('heading', { name: /Compose|Configure step/ })).toBeVisible()
+  await expect(inspector(page).getByRole('combobox', { name: 'Operation' }).locator('option:checked')).toHaveText('Compose')
 
   await configureComposeInput(page, 'hello from the end-to-end suite')
   await renameStep(page, stepName)
@@ -35,7 +35,7 @@ test('a step added, configured, and saved survives a reload', async ({ page, wor
   await saveFlow(page)
 
   await page.reload()
-  await expect(page.getByLabel('Flow name')).toHaveValue(flowName)
+  await expect(flowNameField(page)).toHaveValue(flowName)
   await expect(
     page.getByText(stepName, { exact: true }).first(),
     'the saved step was not present after a reload — the graph did not persist',

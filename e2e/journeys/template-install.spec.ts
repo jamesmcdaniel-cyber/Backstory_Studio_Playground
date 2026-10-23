@@ -18,7 +18,8 @@
  * exact failure this suite exists to remove. So the spec asks the API first
  * and, finding nothing, skips with a reason naming what to seed.
  */
-import { expect, test } from '../support/fixtures'
+import { expect, flowNameField, test } from '../support/fixtures'
+import { deleteFlow } from '../support/api'
 
 test('installing a flow template creates a draft and opens it in the builder', async ({ page }) => {
   const listing = await page.request.get('/api/flow-templates')
@@ -35,18 +36,28 @@ test('installing a flow template creates a draft and opens it in the builder', a
   await expect(
     install,
     'the flow-template gallery rendered no "Create flow draft" action despite templates existing',
-  ).toBeVisible({ timeout: 30_000 })
+  ).toBeVisible()
 
+  const used = page.waitForResponse((response) => /\/api\/flow-templates\/[^/]+\/use$/.test(new URL(response.url()).pathname))
   await install.click()
+  const created = await used
+  expect(created.status(), 'POST /api/flow-templates/[id]/use refused').toBe(200)
+  const flowId = ((await created.json()) as { flow: { id: string } }).flow.id
 
-  // Arrival in the builder on a NEW flow is the outcome the button promises.
-  await page.waitForURL(/\/flows\/[^/?]+/, { timeout: 30_000 })
+  try {
+    // Arrival in the builder on the NEW flow is the outcome the button promises.
+    await page.waitForURL(new RegExp(`/flows/${flowId}`))
 
-  // And the draft carries the template's work, not an empty canvas — the
-  // failure mode where the flow is created but the graph is not copied.
-  await expect(page.getByLabel('Flow name')).not.toHaveValue('', { timeout: 30_000 })
-  await expect(
-    page.getByTestId('step-card').filter({ hasNot: page.locator('[data-node-id="trigger"]') }).first(),
-    'the installed template produced a flow with no steps',
-  ).toBeVisible({ timeout: 30_000 })
+    // And the draft carries the template's work, not an empty canvas — the
+    // failure mode where the flow is created but the graph is not copied.
+    await expect(flowNameField(page)).not.toHaveValue('')
+    await expect(
+      page.getByTestId('step-card').filter({ hasNot: page.locator('[data-node-id="trigger"]') }).first(),
+      'the installed template produced a flow with no steps',
+    ).toBeVisible()
+  } finally {
+    // The draft goes; any built-in agent the template provisioned stays, and
+    // is reused (not duplicated) by the next install.
+    await deleteFlow(page.request, flowId).catch(() => undefined)
+  }
 })

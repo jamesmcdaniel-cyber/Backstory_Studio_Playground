@@ -63,7 +63,7 @@ test('a person who has used their daily runs is refused, and told when it resets
     await expect(
       page.getByText(LIMIT_MESSAGE.flowRuns(FREE_TIER_FLOW_RUNS_PER_DAY)),
       'the daily run ceiling did not refuse the run, or refused it without telling the user why',
-    ).toBeVisible({ timeout: 30_000 })
+    ).toBeVisible()
   } finally {
     // Restore the account before anything else touches it, even on failure.
     await clearSeededRuns(flowId)

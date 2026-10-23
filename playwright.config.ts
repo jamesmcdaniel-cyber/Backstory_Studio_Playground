@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
-import { STORAGE_STATE } from './e2e/support/env'
+import { STORAGE_STATE, isLocalTarget } from './e2e/support/env'
 
 /**
  * Four kinds of run live in one config, separated by project:
@@ -27,12 +27,34 @@ import { STORAGE_STATE } from './e2e/support/env'
  */
 const DESKTOP = { width: 1440, height: 900 }
 
+/**
+ * A `next dev` server compiles every page and API route on its first request,
+ * and the flow builder alone pulls in dozens of them — so against a laptop
+ * stack the first visit to a surface can take longer than a deployed page
+ * takes to finish its whole journey. Local runs get patient budgets; deployed
+ * runs keep tight ones, because there slowness IS the regression.
+ */
+const LOCAL_TARGET = isLocalTarget()
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
-  retries: process.env.CI ? 2 : 0,
+  // A laptop `next dev` restarts itself when its heap nears the limit, and a
+  // request that lands mid-restart gets an empty response — one retry absorbs
+  // that without hiding a real failure (which fails twice).
+  retries: process.env.CI ? 2 : LOCAL_TARGET ? 1 : 0,
+  // Journeys wait up to two minutes for a run to finish; the test budget must
+  // be larger than the longest single wait inside it.
+  timeout: LOCAL_TARGET ? 600_000 : 150_000,
+  expect: { timeout: LOCAL_TARGET ? 90_000 : 30_000 },
   reporter: process.env.CI ? [['html', { open: 'never' }], ['github']] : 'list',
-  use: { baseURL: process.env.E2E_BASE_URL || 'http://127.0.0.1:3000', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
+  use: {
+    baseURL: process.env.E2E_BASE_URL || 'http://127.0.0.1:3000',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    navigationTimeout: LOCAL_TARGET ? 300_000 : 30_000,
+    actionTimeout: LOCAL_TARGET ? 120_000 : 15_000,
+  },
   webServer: process.env.E2E_BASE_URL ? undefined : {
     command: 'NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_ANON_KEY=e2e-anonymous-key npm run dev',
     url: 'http://127.0.0.1:3000', reuseExistingServer: !process.env.CI, timeout: 120_000,

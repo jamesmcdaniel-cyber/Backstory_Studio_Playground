@@ -31,6 +31,8 @@ export type CredentialKind =
   /** The shared secret an audit-stream destination signs its deliveries with. */
   | 'audit_stream'
   | 'external_secret_provider'
+  /** The secret an external agent's task deliveries are signed with. */
+  | 'external_agent'
 
 export const CREDENTIAL_GRANTED = 'credential.granted'
 export const CREDENTIAL_ROTATED = 'credential.rotated'

@@ -169,6 +169,18 @@ async function recordAction(ctx: ActionLedgerContext, outcome: { status: 'done' 
 }
 
 /**
+ * A ledger row written directly, for an action that is not one wrapped tool
+ * call: a task handed to an external agent (and whether it arrived), and the
+ * reply it sent back. Same redaction and the same never-throw contract.
+ */
+export function recordLedgerEntry(
+  ctx: ActionLedgerContext,
+  outcome: { status: 'done' | 'failed'; resultRef?: ResultRef | null; error?: string },
+): Promise<void> {
+  return recordAction(ctx, outcome)
+}
+
+/**
  * Run one tool call, recording it on the ledger when it is a write.
  *
  * For an update whose compensator can read the record first, the prior values

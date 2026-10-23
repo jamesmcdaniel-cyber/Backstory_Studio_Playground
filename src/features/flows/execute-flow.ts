@@ -595,6 +595,9 @@ async function runFlowExecutionInner(
               userId: job.userId,
               input: node.input,
               onExecutionCreated,
+              // Read only by an external agent: which flow asked, and which
+              // run a settled reply must resume.
+              origin: { flowId: run.flowId, flowRunId: run.id, nodeId: node.id, flowName: flow.name },
               // Flows run end to end: the agent's own `requireApproval` gate
               // never pauses a flow run.
               skipApprovalGate: true,
@@ -608,7 +611,9 @@ async function runFlowExecutionInner(
         // Persist the pause reason on the step so the runs API can surface it.
         // The resume scan only reuses output for succeeded/skipped steps, so
         // this waiting-info output never leaks into resumed step data.
-        const kind = result.status === 'waiting_for_approval' ? 'approval' : 'input'
+        // 'external': waiting on an external agent's reply — answered only
+        // through the agent reply API, never by a person typing into the run.
+        const kind = result.status === 'waiting_for_approval' ? 'approval' : result.status === 'waiting_for_external' ? 'external' : 'input'
         await finishStep({
           status: 'waiting',
           agentExecutionId: result.executionId ?? null,

@@ -464,6 +464,12 @@ const PLANE_REASONS: Record<string, string> = {
  * a compensator come back `undoable: false` with the reason a person sees.
  */
 export function compensationFor(entry: { plane: string; provider: string; tool: string }): Compensation {
+  // An external agent's ledger: tasks handed over and replies received.
+  if (entry.plane === 'external') {
+    return entry.tool === 'reply_received'
+      ? { undoable: false, reason: 'A reply received from the agent — it changed nothing outside Backstory.' }
+      : { undoable: false, reason: 'A task handed to an external agent cannot be recalled: it already has what was sent.' }
+  }
   if (entry.provider.startsWith('nango:')) {
     return NANGO_COMPENSATIONS[entry.tool] ?? { undoable: false, reason: 'No reverse action is defined for this tool yet.' }
   }

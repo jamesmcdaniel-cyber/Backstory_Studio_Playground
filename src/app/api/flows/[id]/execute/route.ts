@@ -154,8 +154,14 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       const pending = deriveRunWaitingAll(owned.status, steps)
       const routed = chooseWaitingReply(pending, parsed.replyStepKey)
       if (routed && 'error' in routed) throw new ApiError(routed.error, 409, routed.code)
-      if ((routed?.target ?? deriveRunWaiting(owned.status, steps))?.kind === 'approval') {
+      const awaited = (routed?.target ?? deriveRunWaiting(owned.status, steps))?.kind
+      if (awaited === 'approval') {
         throw new ApiError('This run is waiting for an approval decision, not a reply.', 400, 'FLOW_RUN_AWAITING_APPROVAL')
+      }
+      // An external agent answers through its own reply API — a person's text
+      // here must never stand in for its reply.
+      if (awaited === 'external') {
+        throw new ApiError('This run is waiting for an external agent to reply.', 409, 'FLOW_RUN_AWAITING_EXTERNAL')
       }
     }
     await assertPinnedGraphRunnable(owned.graphSnapshot, flow.graph, {

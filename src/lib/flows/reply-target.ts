@@ -8,7 +8,7 @@
 
 import type { RunWaiting } from './run-waiting'
 
-export type ReplyTarget = 'flow' | 'agent' | 'approval-block'
+export type ReplyTarget = 'flow' | 'agent' | 'approval-block' | 'external-block'
 
 /**
  * Decide what a reply to an agent execution should resume.
@@ -32,5 +32,8 @@ export function resolveReplyTarget(
   if (!run || !step) return 'agent'
   if (run.status !== 'waiting') return 'agent'
   if (!waiting || waiting.nodeId !== step.nodeId) return 'agent'
-  return waiting.kind === 'approval' ? 'approval-block' : 'flow'
+  if (waiting.kind === 'approval') return 'approval-block'
+  // An external agent answers only through its own reply API.
+  if (waiting.kind === 'external') return 'external-block'
+  return 'flow'
 }

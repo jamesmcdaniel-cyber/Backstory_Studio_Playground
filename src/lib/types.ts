@@ -6,6 +6,8 @@
 
 export type Agent = {
   id: string
+  /** 'external' = an agent on someone else's infrastructure, registered as a teammate. */
+  agentType?: 'custom' | 'external'
   title: string
   description: string
   instructions: string

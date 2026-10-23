@@ -74,6 +74,21 @@ export type ScopeTrigger =
   | { kind: 'slack_channel'; count: number }
   | { kind: 'slack_command'; command: string }
 
+/**
+ * An external agent (running on someone else's infrastructure) as the card
+ * states it. Present only for those agents; their counts and connections are
+ * empty because they have NO platform tools — they see only what each task
+ * sends them.
+ */
+export type ExternalScopeFacts = {
+  webhookHost: string
+  enabled: boolean
+  replyTimeoutMinutes: number
+  capabilities: string | null
+  lastDelivery: { at: string; status: 'delivered' | 'failed'; error: string | null } | null
+  lastReplyAt: string | null
+}
+
 export type AgentScope = {
   agentId: string
   /** Whose view this is: the scope is resolved for the person asking. */
@@ -98,6 +113,8 @@ export type AgentScope = {
   triggers: ScopeTrigger[]
   /** Facts a person should know that are not per-tool. */
   notes: string[]
+  /** Set for an external agent: where its tasks go and how it is doing. */
+  external?: ExternalScopeFacts
 }
 
 /** The compact form a roster card shows. */
@@ -110,6 +127,8 @@ export type AgentScopeSummary = {
   triggerCount: number
   /** Set when this line stands for several jobs (a teammate): counts are the widest job's. */
   jobs?: number
+  /** An external agent: no platform tools; its tasks go to this host. */
+  external?: { webhookHost: string; lastDeliveryFailed: boolean }
 }
 
 export function countScope(connections: ScopeConnection[]): ScopeCounts {
@@ -137,6 +156,7 @@ export function summarizeScope(scope: AgentScope): AgentScopeSummary {
     agentRequiresApproval: scope.approval.agentRequiresApproval,
     scheduled: scope.triggers.some((trigger) => trigger.kind === 'schedule'),
     triggerCount: scope.triggers.length,
+    ...(scope.external ? { external: { webhookHost: scope.external.webhookHost, lastDeliveryFailed: scope.external.lastDelivery?.status === 'failed' } } : {}),
   }
 }
 

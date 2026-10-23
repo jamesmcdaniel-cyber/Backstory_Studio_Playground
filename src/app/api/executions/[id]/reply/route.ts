@@ -60,6 +60,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     if (target === 'approval-block') {
       throw new ApiError('This step is waiting for an approval decision.', 400, 'FLOW_RUN_AWAITING_APPROVAL')
     }
+    if (target === 'external-block') {
+      throw new ApiError('This step is waiting for an external agent to reply.', 409, 'FLOW_RUN_AWAITING_EXTERNAL')
+    }
     // target 'agent' includes the swept-run case: an ABANDONED (timed-out)
     // execution may later go waiting_for_input inside a run that already
     // `failed` — falling through to the bare agent resume still lets the

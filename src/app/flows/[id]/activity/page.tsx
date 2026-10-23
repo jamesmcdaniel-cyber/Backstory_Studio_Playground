@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils'
 import { ActionLedger } from '@/components/agents/action-ledger'
 
 type RunStepSummary = { nodeId: string; status: string; order: number; error?: string | null; warnings?: string[] | null }
-type RunWaiting = { nodeId: string; kind: 'input' | 'approval' | 'unknown'; question?: string; stepKey?: string; iteration?: number }
+type RunWaiting = { nodeId: string; kind: 'input' | 'approval' | 'external' | 'unknown'; question?: string; stepKey?: string; iteration?: number }
 type RunSummary = {
   id: string
   status: string
@@ -123,6 +123,11 @@ function WaitingBanner({
         <>
           <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting for an approval decision</p>
           <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">A step needs an approval before this run can continue.</p>
+        </>
+      ) : waiting.kind === 'external' ? (
+        <>
+          <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting for an external agent</p>
+          <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">The task was sent to an agent outside Backstory. The run continues when it replies, or fails at its deadline.</p>
         </>
       ) : waiting.kind === 'unknown' ? (
         <>
@@ -390,7 +395,9 @@ export default function FlowActivityPage() {
                                   ? 'Waiting for your reply'
                                   : waitingKind === 'approval'
                                     ? 'Waiting for approval'
-                                    : 'Waiting (details unavailable)'
+                                    : waitingKind === 'external'
+                                      ? 'Waiting for the external agent'
+                                      : 'Waiting (details unavailable)'
                                 : step.status
                               return (
                                 <div key={`${step.nodeId}-${i}`} className="flex items-center gap-2 px-4 py-1.5">

@@ -56,6 +56,9 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
           // Clear any stale pendingQuestion so the row stops showing the
           // question it was waiting on once it's cancelled.
           metadata: { ...existingMetadata, pendingQuestion: null },
+          // An external agent's task: its reply capability dies with the run.
+          replyTokenHash: null,
+          replyTokenExpiresAt: null,
         }
       : { status: 'cancelling' }
 

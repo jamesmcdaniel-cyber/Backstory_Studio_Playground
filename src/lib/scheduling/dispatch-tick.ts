@@ -237,6 +237,17 @@ export async function runDispatchTick(
     // src/lib/agents/reap.ts.
     await reapStuckAgentExecutions()
 
+    // External agents that never answered: fail each run at its own reply
+    // deadline, through the normal completion path (Slack, flow, chat).
+    // Isolated so one bad row never aborts the tick.
+    try {
+      const { reapExpiredExternalExecutions } = await import('@/lib/agents/external/settle')
+      await reapExpiredExternalExecutions(now)
+    } catch (error) {
+      apiLogger.error('cron/dispatch: external agent timeout sweep failed', { error: capError(error) })
+      captureError(error, { source: 'cron.dispatch.externalAgentTimeouts' })
+    }
+
     // Same recovery for flows: a crashed inline flow execution leaves its run
     // `running` forever, which also wedges that flow's schedule via the
     // overlap guard. Isolated so a reaper failure never aborts the tick.

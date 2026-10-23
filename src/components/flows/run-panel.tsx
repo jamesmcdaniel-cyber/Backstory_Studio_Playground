@@ -69,7 +69,7 @@ export type RunWaitingEntry = {
   nodeId: string
   /** 'unknown' — a missing/unparseable/redacted pause reason — must never be
    *  reported as 'input': that would ask the user a question nobody asked. */
-  kind: 'input' | 'approval' | 'unknown'
+  kind: 'input' | 'approval' | 'external' | 'unknown'
   question?: string
   /** Sent back with the reply so it resolves this pause and no other. */
   stepKey?: string
@@ -226,7 +226,7 @@ function useAgentProcessFeed(executionId: string | null | undefined, active: boo
   return rows
 }
 
-function StepRow({ step, label, toolName, waitingKind, onRerunFrom, onForkWithEdits }: { step: RunStep; label: string; toolName?: string | null; waitingKind?: 'input' | 'approval' | 'unknown'; onRerunFrom?: () => void; onForkWithEdits?: () => void }) {
+function StepRow({ step, label, toolName, waitingKind, onRerunFrom, onForkWithEdits }: { step: RunStep; label: string; toolName?: string | null; waitingKind?: 'input' | 'approval' | 'external' | 'unknown'; onRerunFrom?: () => void; onForkWithEdits?: () => void }) {
   const [open, setOpen] = useState(false)
   // An in-flight agent step with a linked execution shows the agent's REAL
   // process (below) instead of the decorative typewriter word. Steps without
@@ -240,7 +240,9 @@ function StepRow({ step, label, toolName, waitingKind, onRerunFrom, onForkWithEd
       ? 'Waiting for your reply'
       : waitingKind === 'approval'
         ? 'Waiting for approval'
-        : 'Waiting (details unavailable)'
+        : waitingKind === 'external'
+          ? 'Waiting for the external agent'
+          : 'Waiting (details unavailable)'
     : step.status
   return (
     <div className="border-b border-border/60 last:border-0">
@@ -309,7 +311,9 @@ function StepRow({ step, label, toolName, waitingKind, onRerunFrom, onForkWithEd
                       ? 'Waiting for an approval decision'
                       : waiting.kind === 'input'
                         ? 'Waiting for a reply'
-                        : 'Waiting (details unavailable)'}
+                        : waiting.kind === 'external'
+                          ? 'Waiting for the external agent to reply'
+                          : 'Waiting (details unavailable)'}
               </p>
             )
           })()}
@@ -410,6 +414,11 @@ function WaitingBanner({
           <>
             <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting for an approval decision</p>
             <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">A step needs an approval before this run can continue.</p>
+          </>
+        ) : waiting.kind === 'external' ? (
+          <>
+            <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">Waiting for an external agent</p>
+            <p className="mt-1 text-xs text-blue-800 dark:text-blue-300">The task was sent to an agent outside Backstory. The run continues when it replies, or fails at its deadline.</p>
           </>
         ) : waiting.kind === 'unknown' ? (
           <>

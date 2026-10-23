@@ -13,6 +13,7 @@ export const ARTIFACT_AGENT_TEMPLATE_ID = 'builtin:artifact-editor'
 export function serializeAgent(agent: {
   id: string
   artifactTemplateCopyId?: string | null
+  agentType?: string | null
   description: string
   objective: string
   goal: string | null
@@ -30,6 +31,10 @@ export function serializeAgent(agent: {
   const metadata = readAgentMetadata(agent.metadata)
   return {
     id: agent.id,
+    // 'external' = runs on someone else's infrastructure (inbound BYOA): no
+    // platform tools, answers through the agent reply API. See
+    // src/lib/agents/external/types.ts.
+    agentType: (agent.agentType ?? 'CUSTOM').toUpperCase() === 'EXTERNAL' ? ('external' as const) : ('custom' as const),
     title: metadata.title || agent.description.split('\n')[0] || 'Untitled agent',
     description: metadata.description || agent.description,
     instructions: agent.objective,

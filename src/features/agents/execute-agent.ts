@@ -32,6 +32,7 @@ import {
 import { agentToolConfig, discoveredToolsFromGroups, loadAgentToolGroups, type ArtifactRunContext, type DiscoveredTool, type UnavailableTool } from './agent-tool-resolution'
 import { applyPublishedDefinition } from '@/lib/agents/publish'
 import { AgentRunRefusedError } from '@/lib/agents/run-errors'
+import { EXTERNAL_AGENT_TYPE, isExternalAgentType } from '@/lib/agents/external/types'
 import { startExecutionHeartbeat } from '@/lib/agents/liveness'
 import { scopeDescriptionSuffix, toolScopeViolation, type AgentToolSettings } from '@/lib/connectors/tool-quick-config'
 import type { AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
@@ -100,6 +101,12 @@ export type AgentExecutionJob = {
   // `requireApproval` gate is bypassed — nothing inside a flow pauses on an
   // approval. Interactive (chat) runs never set this. Plain JSON — queue-safe.
   skipApprovalGate?: boolean
+  /**
+   * Where a flow-step run came from. Only an EXTERNAL agent reads it: its task
+   * tells the agent which flow asked, and a settled reply resumes that flow.
+   * Plain JSON — queue-safe.
+   */
+  origin?: { flowId: string; flowRunId: string; nodeId: string; flowName?: string | null }
 }
 
 // Sub-agent handoff bounds. Kept conservative: sub-runs execute inline within
@@ -675,9 +682,18 @@ async function runAgentExecutionInner(
   },
 ) {
   const { agentId, organizationId, userId } = data
-  const agentRow = await prisma.agentTask.findFirst({
-    where: { id: agentId, organizationId, status: 'ACTIVE' },
+  const loadedAgent = await prisma.agentTask.findFirst({
+    where: { id: agentId, organizationId },
   })
+  // An external agent (someone else's infrastructure) has no model, tools or
+  // prompt of ours: it branches here, before any of that is set up. It checks
+  // the agent's status itself — a run already settled finishes even after the
+  // agent was paused or removed. See ./external-run.ts.
+  if (loadedAgent && isExternalAgentType(loadedAgent.agentType)) {
+    const { runExternalAgentExecution } = await import('./external-run')
+    return runExternalAgentExecution(loadedAgent, data)
+  }
+  const agentRow = loadedAgent?.status === 'ACTIVE' ? loadedAgent : null
   if (!agentRow) throw new AgentRunRefusedError('Agent not found or inactive', 'AGENT_UNAVAILABLE')
   const templateCopy = Boolean(agentRow.artifactTemplateCopyId)
   if (templateCopy) {
@@ -1070,6 +1086,9 @@ async function runAgentExecutionInner(
           organizationId,
           status: 'ACTIVE',
           id: allowList.length ? { in: allowList, notIn: chain } : { notIn: chain },
+          // An external agent answers asynchronously, on its own schedule — a
+          // pipeline stage waiting inline on it would stall this whole run.
+          agentType: { not: EXTERNAL_AGENT_TYPE },
           ...agentVisibilityScope(userId),
         },
         select: { id: true, description: true, metadata: true },

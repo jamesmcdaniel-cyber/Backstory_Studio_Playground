@@ -19,7 +19,7 @@ export type RunWaiting = {
    * reported as 'input': an approval pause misreported as a question asks the
    * user for text nobody is going to read.
    */
-  kind: 'input' | 'approval' | 'unknown'
+  kind: 'input' | 'approval' | 'external' | 'unknown'
   question?: string
   /**
    * The exact step row this pause belongs to, when it is one iteration of a
@@ -49,7 +49,9 @@ function toRunWaiting(step: WaitingStep): RunWaiting {
     kind:
       info?.kind === 'approval'
         ? ('approval' as const)
-        : info?.kind === 'input'
+        : info?.kind === 'external'
+          ? ('external' as const)
+          : info?.kind === 'input'
           ? ('input' as const)
           : ('unknown' as const),
     question: info?.question,

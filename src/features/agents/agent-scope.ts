@@ -37,6 +37,7 @@ import {
   type ScopeToolAccess,
   type ScopeTrigger,
 } from '@/lib/agents/scope-types'
+import { isExternalAgentType, webhookHostOf } from '@/lib/agents/external/types'
 import { agentToolConfig, groupToolDecisions, loadAgentToolGroups } from './agent-tool-resolution'
 import type { ToolPlaneGroup } from './tool-planes'
 
@@ -120,6 +121,51 @@ type ScopeAgentRow = PublishableAgent & {
   userId: string | null
   schedule: unknown
   metadata: unknown
+  agentType?: string
+}
+
+/** The fixed statements every external agent's card makes. Exported for the test. */
+export const EXTERNAL_SCOPE_NOTES = [
+  'No platform tools: it cannot read or act on any Backstory connection, account or document.',
+  'It sees only what each task sends it: the request, who asked, and where it came from.',
+  'Any tool access in future would be an explicit grant by a workspace admin. None exists.',
+]
+
+/**
+ * An external agent's scope. Nothing is resolved through the tool planes —
+ * it has none — so the card is built from its delivery settings and the same
+ * trigger facts every agent carries.
+ */
+async function externalAgentScope(organizationId: string, agent: ScopeAgentRow, metadata: ReturnType<typeof readAgentMetadata>): Promise<AgentScope> {
+  const [external, facts] = await Promise.all([
+    prisma.externalAgent.findFirst({
+      where: { organizationId, agentTaskId: agent.id },
+      select: { webhookUrl: true, replyTimeoutMinutes: true, capabilities: true, lastDeliveryAt: true, lastDeliveryStatus: true, lastDeliveryError: true, lastReplyAt: true },
+    }),
+    agentFacts(organizationId, agent, metadata),
+  ])
+  const status = (agent as { status?: string }).status
+  return {
+    agentId: agent.id,
+    resolvedFor: 'viewer',
+    counts: countScope([]),
+    connections: [],
+    identity: { ownerName: facts.ownerName },
+    approval: { agentRequiresApproval: false, notCoveredByAgentApproval: [] },
+    data: { agentDocuments: 0, collections: [] },
+    triggers: facts.triggers,
+    notes: EXTERNAL_SCOPE_NOTES,
+    external: {
+      webhookHost: external ? webhookHostOf(external.webhookUrl) : 'not configured',
+      enabled: status === undefined || status === 'ACTIVE',
+      replyTimeoutMinutes: external?.replyTimeoutMinutes ?? 0,
+      capabilities: external?.capabilities ?? null,
+      lastDelivery: external?.lastDeliveryAt && (external.lastDeliveryStatus === 'delivered' || external.lastDeliveryStatus === 'failed')
+        ? { at: external.lastDeliveryAt.toISOString(), status: external.lastDeliveryStatus, error: external.lastDeliveryError }
+        : null,
+      lastReplyAt: external?.lastReplyAt?.toISOString() ?? null,
+    },
+  }
 }
 
 /** Everything on the card that is not a tool: triggers, data scope, owner. */
@@ -163,6 +209,9 @@ export async function resolveAgentScope(params: {
   groupsFor?: (key: string, load: () => Promise<ToolPlaneGroup[]>) => Promise<ToolPlaneGroup[]>
 }): Promise<AgentScope> {
   const { organizationId, viewerUserId } = params
+  if (isExternalAgentType(params.agent.agentType)) {
+    return externalAgentScope(organizationId, params.agent, readAgentMetadata(params.agent.metadata))
+  }
   // The definition a run executes: the published one when there is one.
   const agent = applyPublishedDefinition(params.agent)
   const metadata = readAgentMetadata(agent.metadata)

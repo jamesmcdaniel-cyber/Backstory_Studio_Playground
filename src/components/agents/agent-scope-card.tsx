@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Ban, ChevronDown, Eye, Hand, HelpCircle, Loader2, PenLine, RotateCcw, Split } from 'lucide-react'
+import { Ban, ChevronDown, Eye, Globe, Hand, HelpCircle, Loader2, PenLine, RotateCcw, Split } from 'lucide-react'
 import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { cn } from '@/lib/utils'
 import type {
@@ -70,6 +70,23 @@ export function AgentScopeSummaryLine({ summary, className }: { summary: AgentSc
   // Two fixed rows (counts, then trust badges) so every card on the roster
   // keeps the same height whatever an agent carries.
   if (!summary) return <span className={cn('block h-10', className)} aria-hidden="true" />
+  if (summary.external) {
+    return (
+      <span className={cn('flex h-10 w-full flex-col items-center justify-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground', className)}>
+        <span>No platform tools</span>
+        <span
+          className={cn(
+            'inline-flex max-w-full items-center gap-1 truncate rounded-full border border-dashed px-1.5',
+            summary.external.lastDeliveryFailed ? 'border-[var(--status-risk-fg)] text-[var(--status-risk-fg)]' : 'border-gray-300 text-gray-600',
+          )}
+        >
+          <Globe className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="truncate">{summary.external.webhookHost}</span>
+          {summary.external.lastDeliveryFailed && <span className="sr-only">, last delivery failed</span>}
+        </span>
+      </span>
+    )
+  }
   const { counts } = summary
   const approval = summary.agentRequiresApproval ? 'Asks first' : counts.needsApproval > 0 ? `${counts.needsApproval} need approval` : null
   return (
@@ -215,8 +232,97 @@ function ConnectionRow({ connection, defaultOpen }: { connection: ScopeConnectio
   )
 }
 
+function relativeTime(iso: string): string {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return `${hours} h ago`
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function timeoutLabel(minutes: number): string {
+  if (minutes >= 120 && minutes % 60 === 0) return `${minutes / 60} hours`
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`
+}
+
+/**
+ * The card for an external agent. Its whole trust story is the boundary: what
+ * crosses it (each task's contents, out; the reply, back) and what does not
+ * (every platform tool, connection and document). The dashed frame is that
+ * boundary — the same mark its roster card carries.
+ */
+function ExternalScopeCard({ scope, className }: { scope: AgentScope & { external: NonNullable<AgentScope['external']> }; className?: string }) {
+  const { external } = scope
+  const delivery = external.lastDelivery
+  return (
+    <section className={cn('space-y-4', className)} aria-labelledby={`scope-${scope.agentId}`}>
+      <div>
+        <h3 id={`scope-${scope.agentId}`} className="text-base font-semibold text-foreground">What this agent can do</h3>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          It runs outside Backstory, on infrastructure your workspace does not operate.
+        </p>
+      </div>
+
+      <div className="rounded-xl border-2 border-dashed border-gray-300 p-4">
+        <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Ban className="h-4 w-4 text-[var(--status-risk-fg)]" aria-hidden="true" /> No platform tools
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          It can&apos;t read or act on any Backstory connection, account or document. It sees only what each task sends it:
+          the request, who asked, and where it came from (a Slack thread, a flow step or a chat).
+        </p>
+        <p className="mt-2 text-xs text-fg-muted">
+          Any tool access in future would be an explicit grant by a workspace admin. None exists.
+        </p>
+      </div>
+
+      <dl className="grid gap-x-4 gap-y-3 rounded-xl border border-gray-200/80 bg-gray-50/60 p-4 text-sm sm:grid-cols-[7rem_1fr]">
+        <dt className="font-medium text-foreground">Tasks go to</dt>
+        <dd className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+          <Globe className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate font-medium text-foreground">{external.webhookHost}</span>
+          {!external.enabled && (
+            <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">Paused</span>
+          )}
+        </dd>
+
+        <dt className="font-medium text-foreground">Last delivery</dt>
+        <dd className={cn('text-muted-foreground', delivery?.status === 'failed' && 'text-[var(--status-risk-fg)]')}>
+          {!delivery
+            ? 'No task sent yet.'
+            : delivery.status === 'delivered'
+              ? `Delivered ${relativeTime(delivery.at)}.`
+              : `Failed ${relativeTime(delivery.at)}${delivery.error ? `: ${delivery.error}` : ''}.`}
+          {external.lastReplyAt && <span className="block text-muted-foreground">Last reply {relativeTime(external.lastReplyAt)}.</span>}
+        </dd>
+
+        <dt className="font-medium text-foreground">Replies</dt>
+        <dd className="text-muted-foreground">
+          Through its own API key, which can only answer tasks sent to it. A run fails if no reply arrives within {timeoutLabel(external.replyTimeoutMinutes)}.
+        </dd>
+
+        <dt className="font-medium text-foreground">Starts</dt>
+        <dd className="text-muted-foreground">
+          {scope.triggers.length
+            ? scope.triggers.map(triggerLabel).join('. ') + '. Also when someone mentions it, runs it, or picks it for a flow step.'
+            : 'When someone mentions it in Slack, runs it, asks it in chat, or picks it for a flow step.'}
+        </dd>
+
+        {external.capabilities && (
+          <>
+            <dt className="font-medium text-foreground">Built for</dt>
+            <dd className="whitespace-pre-line text-muted-foreground">{external.capabilities}</dd>
+          </>
+        )}
+      </dl>
+    </section>
+  )
+}
+
 /** The full card for a scope already in hand. */
 export function AgentScopeCard({ scope, className }: { scope: AgentScope; className?: string }) {
+  if (scope.external) return <ExternalScopeCard scope={{ ...scope, external: scope.external }} className={className} />
   const { counts } = scope
   const withTools = scope.connections.filter((connection) => connection.tools.length || connection.unavailable)
   // Writes first: they are what a person is deciding whether to trust.

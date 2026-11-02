@@ -107,6 +107,8 @@ describe('withOutputContract', () => {
 
 describe('every built-in template', () => {
   const ids = Object.keys(EXAMPLE_SPECS)
+  // A platform-rendered page has its own contract: the run does not write this shape.
+  const authoredIds = ids.filter((id) => !EXAMPLE_SPECS[id].platformRendered)
 
   it('has an example report and a contract generated from the same spec', () => {
     assert.ok(ids.length >= 40, `expected the full built-in catalogue, got ${ids.length}`)
@@ -117,7 +119,7 @@ describe('every built-in template', () => {
   })
 
   it('describes sections that actually appear in its rendered example (no drift)', () => {
-    for (const id of ids) {
+    for (const id of authoredIds) {
       const html = EXAMPLE_REPORTS[id]
       const contract = EXAMPLE_OUTPUT_CONTRACTS[id]
       for (const section of EXAMPLE_SPECS[id].sections) {
@@ -131,7 +133,7 @@ describe('every built-in template', () => {
 
   it('renders its example with the exact wrapper class its contract pins (no theme drift)', () => {
     const themes = new Set<string>()
-    for (const id of ids) {
+    for (const id of authoredIds) {
       const wrapper = EXAMPLE_REPORTS[id].match(/<div class="(report[^"]*)">/)
       assert.ok(wrapper, `${id}: report wrapper missing`)
       assert.ok(EXAMPLE_OUTPUT_CONTRACTS[id].includes(`<div class="${wrapper![1]}">`), `${id}: contract pins a different theme than the example renders`)

@@ -301,7 +301,12 @@ export async function registerVersionFromExecution(params: {
     return null
   }
   const markdown = html ? null : markdownDocumentOf(params.summary)
-  if (!html && !markdown) return null
+  if (!html && !markdown) {
+    // The answer is prose about a page a tool of this run saved (the CRO
+    // dashboard): the run still links to it, for the notification and Runs.
+    const made = await prisma.artifactVersion.findFirst({ where: { executionId: params.executionId, organizationId: params.organizationId }, select: { id: true, artifactId: true } })
+    return made ? { artifactId: made.artifactId, versionId: made.id, created: false } : null
+  }
   const content = html ?? markdown!
   // The document's own title (its <title> or first heading) names it best; the
   // run's one-line headline is a summary of the run, not a name for the page.

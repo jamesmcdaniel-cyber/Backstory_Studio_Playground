@@ -3,6 +3,43 @@ import type { ReportSpec } from './report-builder'
 
 /** Platform enablement templates: adapters, contracts, migrations, rollout (19–28). */
 export const PLATFORM_SPECS: Record<string, ReportSpec> = {
+  '41-cro-dashboard': {
+    eyebrow: 'Pipeline intelligence report',
+    title: 'CRO Pipeline Health — FY27 Q4 and FY28 Q1',
+    sub: 'Classified every open deal in the current and next fiscal quarter from Backstory evidence. The live page filters, sorts and drills into each deal.',
+    pill: '62 of 148 need action · Published',
+    stats: [
+      ['💰', '$18.4M', 'Open pipeline'],
+      ['✅', '$11.2M', 'On track'],
+      ['⏳', '$2.9M', 'Slipping'],
+      ['🚨', '$4.3M', 'At-Risk'],
+    ],
+    summary:
+      'Most of the open pipeline is on track, but $7.2M is not, and Procurement & Legal is the largest single reason at $2.6M. Roughly half of that is waiting on the buyer; the rest is ours to fix now. The next move is an exec sponsor push on the three largest legal stalls.',
+    sections: [
+      {
+        kind: 'table',
+        eyebrow: 'Evidence-backed analysis',
+        heading: '🔎 Why deals are not on track',
+        count: '4 of 9 reasons shown',
+        head: ['Reason', 'Who moves', 'Deals', 'Amount'],
+        rows: [
+          ['Procurement & Legal', 'Customer', num('14'), num('$2.6M')],
+          ['Deal Execution Gap', 'Ours', num('21'), num('$1.9M')],
+          ['Stakeholder Access', 'Customer', num('11'), num('$1.4M')],
+          ['Low Engagement', 'Shared', num('16'), num('$1.3M')],
+        ],
+      },
+    ],
+    evidence: [
+      ['Backstory pipeline', 'Open deals, amounts, stages, owners and deal types', 'As of now'],
+      ['Backstory status', 'Risks and next steps per deal', 'Last 30 days'],
+      ['Situation search', 'Past situations behind the recommended steps', 'Historical'],
+    ],
+    banner: 'Published the interactive dashboard as an artifact, with a drill-in and recommended steps for every deal not on track.',
+    platformRendered:
+      'The dashboard page is built and saved by your CRO dashboard tools, never written by you. Do not answer with HTML, a React component or a report. Your final response is a few plain sentences with no headings, as your instructions describe.',
+  },
   '19-customer-stack-blueprint': {
     eyebrow: 'Implementation blueprint',
     title: 'Daily digest to Slack — Acme stack blueprint',

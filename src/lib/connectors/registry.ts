@@ -182,6 +182,18 @@ export const BUILTIN_CONNECTORS: ConnectorDescriptor[] = [
     available: () => !isCustomerEdition(),
   },
   {
+    key: 'CRO Dashboard',
+    label: 'CRO dashboard',
+    slug: 'plotly',
+    kind: 'builtin',
+    // Reads Backstory and saves the page as a new artifact version in the
+    // workspace. Nothing leaves and nothing is overwritten; no approval gate.
+    isWrite: false,
+    providerId: 'cro_dashboard',
+    matches: (selected) => selected.toLowerCase() === 'cro dashboard',
+    available: () => true,
+  },
+  {
     key: 'Data Tables',
     label: 'Data Tables',
     slug: 'postgresql',

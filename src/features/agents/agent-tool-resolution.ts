@@ -93,6 +93,7 @@ export async function loadAgentToolGroups(params: {
   httpEndpoints?: AgentHttpEndpoint[]
   agentId?: string
   artifact?: ArtifactRunContext
+  executionId?: string
 }): Promise<ToolPlaneGroup[]> {
   const { organizationId, providers, ownerUserId, artifact } = params
   const nativeProviders = artifact?.kind === 'roi_dashboard' ? [...providers, 'repository', 'code', 'roi'] : [...providers, 'repository', 'code']
@@ -105,6 +106,7 @@ export async function loadAgentToolGroups(params: {
       httpUserId: ownerUserId ?? undefined,
       agentId: params.agentId,
       artifact,
+      executionId: params.executionId,
     }),
     loadNangoPlaneGroups(organizationId, ownerUserId, { providers }),
   ])

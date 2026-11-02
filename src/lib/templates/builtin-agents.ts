@@ -1,4 +1,5 @@
 import { EXAMPLE_REPORTS } from '@/lib/templates/example-reports'
+import { CRO_AGENT_INSTRUCTIONS } from '@/lib/cro-dashboard/rubric'
 
 /**
  * The built-in agent catalogue every workspace sees, served after the org's own
@@ -17,6 +18,23 @@ import { EXAMPLE_REPORTS } from '@/lib/templates/example-reports'
  * run is held to that example section by section.
  */
 export const builtInTemplates = [
+  {
+    "id": "41-cro-dashboard",
+    "name": "CRO Dashboard",
+    "icon": "📊",
+    "description": "Builds an interactive executive dashboard of the whole open-deal portfolio from Backstory: on-track verdict, why deals are stuck, who has to move, a filterable deal list, and a drill-in per deal with recommended steps.",
+    "category": "Pipeline & Forecasting",
+    "instructions": CRO_AGENT_INSTRUCTIONS,
+    "integrations": [
+      "Backstory MCP",
+      "CRO Dashboard"
+    ],
+    "tags": [
+      "on-demand"
+    ],
+    "model": "claude-sonnet-5-5",
+    "exampleOutput": EXAMPLE_REPORTS['41-cro-dashboard'],
+  },
   {
     "id": "39-salesai-upsell-engine",
     "name": "SalesAI Upsell Engine",

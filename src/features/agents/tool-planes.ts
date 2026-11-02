@@ -28,6 +28,8 @@ import { withStaleConnectionRecovery } from '@/lib/nango/connection-recovery'
 import { REPOSITORY_TOOLS, RepositoryToolClient } from '@/lib/knowledge/tools'
 import { CODE_TOOLS, CodeAnalysisToolClient } from '@/lib/code-analysis/tools'
 import { ROI_TOOLS, RoiToolClient } from '@/lib/roi/tools'
+import { CRO_BACKSTORY_TOOLS, CRO_TOOLS, CroToolClient } from '@/lib/cro-dashboard/tools'
+import type { BackstoryCaller } from '@/lib/cro-dashboard/score'
 import { ArtifactToolClient, artifactToolsFor } from '@/lib/artifacts/tools'
 import { NANGO_PROVIDER_TOOLS, PROVIDER_CONFIG_KEYS } from '@/lib/nango/provider-tools'
 import { McpClient, mcpConfigFromConnection } from '@/lib/mcp/mcp-client'
@@ -438,10 +440,27 @@ export async function loadMcpConnectionPlaneGroups(
   }))
 }
 
+/**
+ * The Backstory MCP as a plain caller, for a plane that reads it on the run's
+ * behalf: the People.ai identity first, else the person's or workspace's own
+ * connection. A tool turned off or held for approval in Integrations rules that
+ * connection out, so this never reaches around a permission.
+ */
+async function croBackstoryCaller(organizationId: string, ownerUserId?: string | null): Promise<BackstoryCaller> {
+  const peopleAi = await loadPeopleAiPlaneGroup(organizationId, ownerUserId)
+  const groups = peopleAi?.client && peopleAi.tools.length ? [peopleAi] : await loadMcpConnectionPlaneGroups(organizationId, ownerUserId)
+  const usable = groups
+    .filter((candidate) => candidate.client && CRO_BACKSTORY_TOOLS.every((name) => candidate.tools.some((tool) => tool.name === name && !tool.policy)))
+    // Someone's own connection before a shared one: agents act as the person running them.
+    .sort((a, b) => Number(b.credential?.actsAs === 'user') - Number(a.credential?.actsAs === 'user'))[0]
+  if (!usable) throw new Error(`The CRO dashboard needs a Backstory connection with these tools turned on: ${CRO_BACKSTORY_TOOLS.join(', ')}. Connect Backstory in Integrations, or turn them on there.`)
+  return (name, args) => usable.client!.executeTool(usable.serverUrl, name, args) as Promise<unknown>
+}
+
 // ── Native built-ins (Granola / Slack / HTTP / Email) ─────────────────────────
 
 /** Native planes that run inside Backstory and reach no outside account. */
-const NATIVE_INTERNAL = new Set(['data_tables', 'repository', 'code', 'artifact', 'roi', 'adapters'])
+const NATIVE_INTERNAL = new Set(['data_tables', 'repository', 'code', 'artifact', 'roi', 'cro_dashboard', 'adapters'])
 
 /**
  * Built-in integration planes. When `providers` is given (the agent path),
@@ -458,6 +477,8 @@ export async function loadNativePlaneGroups(
     agentId?: string | null
     /** Set for a run started from an artifact's chat: binds the artifact plane to it. */
     artifact?: { artifactId: string; kind: string; executionId: string; request: string | null; expectedVersionId?: string; templateCopy?: boolean; guestCopy?: boolean }
+    /** The agent run these tools serve, for a plane that links what it saves back to the run. */
+    executionId?: string
   } = {},
 ): Promise<ToolPlaneGroup[]> {
   const selected = (descriptor: ConnectorDescriptor) =>
@@ -608,6 +629,23 @@ export async function loadNativePlaneGroups(
       'backstory://roi',
       new RoiToolClient(organizationId, options.httpUserId ?? '', options.agentId ?? null),
       ROI_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    ))
+  }
+
+  // The CRO dashboard: agents only (its three steps pass a draft along, which
+  // is no shape for a flow step), and only reading through the same Backstory
+  // identity ladder and per-tool permissions as the agent's own Backstory tools.
+  const croConn = BUILTIN_CONNECTORS.find((c) => c.providerId === 'cro_dashboard')!
+  if (options.providers && selected(croConn)) {
+    groups.push(group(
+      croConn,
+      'backstory://cro-dashboard',
+      new CroToolClient(organizationId, options.httpUserId ?? '', options.agentId ?? null, {
+        backstory: () => croBackstoryCaller(organizationId, options.httpUserId),
+        executionId: options.executionId,
+        ...(options.artifact ? { artifact: options.artifact } : {}),
+      }),
+      CRO_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
     ))
   }
 

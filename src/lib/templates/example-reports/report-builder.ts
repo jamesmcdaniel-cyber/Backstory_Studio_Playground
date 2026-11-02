@@ -44,6 +44,12 @@ export type ReportSpec = {
   evidence: [string, string, string][]
   /** Dark outcome banner. */
   banner: string
+  /**
+   * The platform builds this template's deliverable from its tools: the example
+   * only illustrates it, and this is the contract in its place. Without it a run
+   * would be told to write the report as its answer, beside the real page.
+   */
+  platformRendered?: string
 }
 
 export type Section =
@@ -140,6 +146,7 @@ const sectionLine = (s: Section): string => {
  * never drift apart.
  */
 export function outputContract(spec: ReportSpec): string {
+  if (spec.platformRendered) return [OUTPUT_CONTRACT_MARKER, '', spec.platformRendered].join('\n')
   const numbered: string[] = [
     `Hero card — eyebrow "${plain(spec.eyebrow).toUpperCase()}", an <h1> title in the form "${plain(spec.title)}", one subtitle sentence saying what THIS run did (the example's reads "${plain(spec.sub)}"), and a status pill in the form "${plain(spec.pill)}" carrying this run's real counts.`,
     `Stat row — exactly ${spec.stats.length} tiles, in this order, with these emoji and labels: ${statLine(spec.stats)}. Keep the emoji and labels; replace the values with this run's numbers.`,

@@ -428,6 +428,7 @@ export async function loadTools(
   agentId?: string,
   artifact?: ArtifactRunContext,
   policy?: ToolPolicy,
+  executionId?: string,
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
   // at the end (capDiscoveredTools) so write tools aren't crowded out. Plane
@@ -498,7 +499,7 @@ export async function loadTools(
   // reads the very same functions, which is what keeps "what this agent can
   // do" honest. A conversation about an artifact runs with the producing
   // agent's whole toolset plus the artifact's own tools.
-  const groups = await loadAgentToolGroups({ organizationId, providers, ownerUserId, httpEndpoints, agentId, artifact })
+  const groups = await loadAgentToolGroups({ organizationId, providers, ownerUserId, httpEndpoints, agentId, artifact, executionId })
   const fromGroups = discoveredToolsFromGroups(groups, toolSettings)
   discovered.push(...fromGroups.discovered)
   // Planes that produced no usable client. Kept so the run can report WHICH
@@ -1013,7 +1014,7 @@ async function runAgentExecutionInner(
     // Artifact prompts contain extensive source/instructions. Rank against the
     // actual latest request first, not the first 2 KB of that boilerplate.
     const toolQuery = artifactContext?.toolQuery || artifactContext?.request || [data.input, agent.objective].filter(Boolean).join('\n')
-    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext, policy)
+    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext, policy, execution.id)
     const { bindings, unavailable } = loaded
 
     // Applied AFTER the agent's own tools and any step-granted connections, so

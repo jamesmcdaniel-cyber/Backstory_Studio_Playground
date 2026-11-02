@@ -3,7 +3,6 @@ import { deleteStoredFile, readStoredFile, saveStoredFile } from '@/lib/files/st
 import { addVersion, createArtifact } from '@/lib/artifacts/service'
 import { ArtifactValidatorUnavailableError } from '@/lib/artifacts/preflight'
 import { ArtifactContentError } from '@/lib/artifacts/validate-content'
-import { generateStructured } from '@/lib/llm/model-runner'
 import { mapConcurrent } from '@/lib/map-concurrent'
 import { dealTypeOf, fiscalQuarters, inferFiscalStart, isoDate, parseAccountOpportunities, parseOpenDeals, quarterOf, type AccountOpportunity, type OpenDeal } from './pipeline'
 import { renderCroDashboard, type CroDashboardData, type CroDeal, type CroQuarter } from './schema'
@@ -149,7 +148,6 @@ export function croNotes(draft: CroDraft): string[] {
 }
 
 export class CroToolClient {
-  private readonly generate: StructuredGenerator
   private readonly now: () => Date
 
   constructor(
@@ -158,7 +156,6 @@ export class CroToolClient {
     private readonly agentId: string | null,
     private readonly deps: CroToolDeps,
   ) {
-    this.generate = deps.generate ?? generateStructured
     this.now = deps.now ?? (() => new Date())
   }
 
@@ -279,7 +276,7 @@ export class CroToolClient {
       }
       const results = await Promise.all(batches.map((batch) => scoreBatch(batch, {
         backstory,
-        generate: this.generate,
+        generate: this.deps.generate,
         ledger,
         today: draft.today,
         quarterEndOf: (q) => quarterEnd.get(q) ?? '',

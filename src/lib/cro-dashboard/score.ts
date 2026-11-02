@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { generateStructured, type LedgerContext } from '@/lib/llm/model-runner'
 import { mapConcurrent } from '@/lib/map-concurrent'
+import { GUARDRAIL_RULE } from '@/lib/security/guardrails'
 import { fenceUntrusted, UNTRUSTED_DATA_RULE } from '@/lib/security/prompt'
 import { CRO_CLASSIFICATION_RUBRIC, CRO_RECOMMENDATION_RUBRIC } from './rubric'
 import { AE_TITLE, CSM_TITLE, internalWithTitle, mcpPayload, mcpText, parseEngagedPeople, SE_TITLE, type EngagedPerson } from './pipeline'
@@ -23,7 +24,7 @@ const MAX_ANALOGUES = 3
 
 export type BackstoryCaller = (name: string, args: Record<string, unknown>) => Promise<unknown>
 export type StructuredGenerator = typeof generateStructured
-export type ScoringDeps = { backstory: BackstoryCaller; generate: StructuredGenerator; ledger: LedgerContext; today: string; quarterEndOf: (q: string) => string }
+export type ScoringDeps = { backstory: BackstoryCaller; generate?: StructuredGenerator; ledger: LedgerContext; today: string; quarterEndOf: (q: string) => string }
 
 const EMAIL = /[\w.+-]+@[\w-]+\.[\w.-]+/g
 /** Page text: no Markdown emphasis, no email addresses, bounded. */
@@ -188,6 +189,7 @@ export function situationQuery(deal: CroDeal, blocker: string, people: EngagedPe
 export type BatchResult = { scored: CroDeal[]; failed: string[]; firstError: string | null; seller: string; engagedFailures: number }
 
 export async function scoreBatch(batch: CroDeal[], deps: ScoringDeps): Promise<BatchResult> {
+  const generate = deps.generate ?? generateStructured
   const failed = new Set<string>()
   let firstError: string | null = null
   const fail = (id: string, error: unknown) => {
@@ -213,13 +215,13 @@ export async function scoreBatch(batch: CroDeal[], deps: ScoringDeps): Promise<B
   const classifications = new Map<string, Classification>()
   if (gathered.length) {
     try {
-      const raw = await deps.generate({
+      const raw = await generate({
         schemaName: 'cro_deal_classification',
         schema: CLASSIFY_SCHEMA,
         model: CRO_SCORING_MODEL,
         maxTokens: 8_000,
         ledger: deps.ledger,
-        system: `You classify open sales deals for a CRO's pipeline dashboard, following this rubric exactly. Today is ${deps.today}. Backstory is the only evidence source. Return one entry per deal, with its id unchanged. Write plain text with no Markdown. Never invent a fact.\n\n${CRO_CLASSIFICATION_RUBRIC}\n\n${UNTRUSTED_DATA_RULE}`,
+        system: `You classify open sales deals for a CRO's pipeline dashboard, following this rubric exactly. Today is ${deps.today}. Backstory is the only evidence source. Return one entry per deal, with its id unchanged. Write plain text with no Markdown. Never invent a fact.\n\n${CRO_CLASSIFICATION_RUBRIC}\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`,
         user: fenceUntrusted('Backstory evidence for each deal', JSON.stringify(gathered.map(({ deal, status, people }) => ({
           id: deal.id,
           opportunity: deal.name,
@@ -269,13 +271,13 @@ export async function scoreBatch(batch: CroDeal[], deps: ScoringDeps): Promise<B
   const recommendations = new Map<string, z.infer<typeof recommendationSchema>>()
   if (notOnTrack.length) {
     try {
-      const raw = await deps.generate({
+      const raw = await generate({
         schemaName: 'cro_deal_recommendations',
         schema: RECOMMEND_SCHEMA,
         model: CRO_SCORING_MODEL,
         maxTokens: 12_000,
         ledger: deps.ledger,
-        system: `You write recommended next steps for deals that are not on track, on a CRO's pipeline dashboard, following these rules exactly. Today is ${deps.today}. Return one entry per deal, with its id unchanged. Write plain text with no Markdown.\n\n${CRO_RECOMMENDATION_RUBRIC}\n\n${UNTRUSTED_DATA_RULE}`,
+        system: `You write recommended next steps for deals that are not on track, on a CRO's pipeline dashboard, following these rules exactly. Today is ${deps.today}. Return one entry per deal, with its id unchanged. Write plain text with no Markdown.\n\n${CRO_RECOMMENDATION_RUBRIC}\n\n${UNTRUSTED_DATA_RULE}\n\n${GUARDRAIL_RULE}`,
         user: fenceUntrusted('deals and the past situations found for them', JSON.stringify(notOnTrack.map(({ deal, people }) => ({
           id: deal.id,
           opportunity: deal.name,

@@ -86,7 +86,7 @@ after(async () => {
   if (!TEST_DB) return
   await prisma.artifactVersion.deleteMany({ where: { organizationId: seeded.organizationId } }).catch(() => undefined)
   await prisma.artifact.deleteMany({ where: { organizationId: seeded.organizationId } }).catch(() => undefined)
-  await prisma.agentTask.deleteMany({ where: { id: agentId } }).catch(() => undefined)
+  await prisma.agentTask.deleteMany({ where: { id: agentId, organizationId: seeded.organizationId } }).catch(() => undefined)
   await seeded.cleanup()
   await prisma.$disconnect()
 })

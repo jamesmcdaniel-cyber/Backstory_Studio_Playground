@@ -19,6 +19,7 @@ import { agentVisibilityScope } from '@/lib/server/visibility'
 import { loadFlowToolCatalog, type FlowToolCatalogConnection } from '@/lib/flows/tool-catalog'
 import { validateFlowGraph, type FlowValidationResult } from '@/lib/flows/validate'
 import type { flowGraphSchema } from '@/lib/flows/graph'
+import { credentialOwnerLabel, httpCredentialUsableBy } from '@/lib/credentials/http-credential-owner'
 
 type FlowGraph = ReturnType<typeof flowGraphSchema.parse>
 
@@ -28,7 +29,8 @@ export interface RunValidationContext {
   /** The shape validateFlowGraph wants. */
   agentRefs: { id: string; title: string }[]
   toolCatalog: FlowToolCatalogConnection[]
-  httpCredentials: { id: string }[]
+  /** `foreignOwner` is set when the credential is another member's personal one: the run may not use it. */
+  httpCredentials: { id: string; host?: string; foreignOwner?: string }[]
   credentialResolvers: { id: string }[]
 }
 
@@ -37,6 +39,12 @@ export interface RunValidationScope {
   /** Whose visibility decides which agents/connections count as available. */
   userId: string
   flowId?: string
+  /**
+   * Who the run will ACT as, for whose HTTP credentials it may use; defaults
+   * to `userId`. Publishing passes the flow's owner, because the published
+   * schedule/webhook/poll runs act as the owner, not as whoever published.
+   */
+  credentialUserId?: string
 }
 
 /** Connections and credentials this graph actually references — nothing else is fetched. */
@@ -79,7 +87,7 @@ export async function loadRunValidationContext(
     credentialIds.length
       ? prisma.httpCredential.findMany({
           where: { organizationId: scope.organizationId, id: { in: credentialIds }, status: { in: ['verified', 'error'] } },
-          select: { id: true },
+          select: { id: true, userId: true, allowedHost: true, user: { select: { name: true, email: true } } },
         })
       : Promise.resolve([]),
     credentialResolverIds.length
@@ -93,7 +101,14 @@ export async function loadRunValidationContext(
     agents,
     agentRefs: agents.map((agent) => ({ id: agent.id, title: agent.description })),
     toolCatalog,
-    httpCredentials,
+    // The same owner rule the runtime enforces (resolveHttpCredential with
+    // runnerOwned), checked before the run starts so it fails with the fix
+    // rather than mid-run.
+    httpCredentials: httpCredentials.map((row) => ({
+      id: row.id,
+      host: row.allowedHost,
+      ...(httpCredentialUsableBy(row, scope.credentialUserId ?? scope.userId) ? {} : { foreignOwner: credentialOwnerLabel(row.user) }),
+    })),
     credentialResolvers,
   }
 }

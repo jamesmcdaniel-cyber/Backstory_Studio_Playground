@@ -2,6 +2,7 @@ import { AI_OP_LABELS, FIELD_TYPES, type FlowGraph, type FlowNode } from '@/lib/
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { FLOW_TRIGGER_TYPES } from '@/lib/flows/trigger'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
+import { foreignHttpCredentialMessage } from '@/lib/credentials/http-credential-owner'
 import { matchBrandHint, type ToolBrand } from '@/lib/flows/tool-presentation'
 import { buildAdjacency, findCycle } from '@/lib/flows/dag-scheduler'
 import { nodeVersionProblem } from '@/lib/flows/node-versions'
@@ -18,7 +19,8 @@ export type FlowValidationContext = {
   agents?: { id: string; title?: string }[]
   toolCatalog?: { id: string; name?: string; tools?: { name: string; inputSchema?: unknown }[]; toolsError?: string; blockedTools?: string[] }[]
   /** Reusable HTTP credentials visible to the executing workspace. */
-  httpCredentials?: { id: string }[]
+  /** `foreignOwner`: another member's personal credential, which this run may not act through. */
+  httpCredentials?: { id: string; host?: string; foreignOwner?: string }[]
   /** Per-user runtime credential placeholders visible to the workspace. */
   credentialResolvers?: { id: string }[]
   /** Set by publish validation; omitted for draft/manual-run validation. */
@@ -550,8 +552,11 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       if (node.data.connectionId && context.toolCatalog && !connectionIds.has(node.data.connectionId)) {
         add(issues, 'error', 'UNKNOWN_HTTP_CONNECTION', `${nodeLabel(node)} authenticates with a connection that is not available — pick another connection or reconnect it in Integrations.`, node.id)
       }
+      const foreignCredential = node.data.credentialId ? context.httpCredentials?.find((credential) => credential.id === node.data.credentialId && credential.foreignOwner) : undefined
       if (node.data.credentialId && context.httpCredentials && !httpCredentialIds.has(node.data.credentialId)) {
         add(issues, 'error', 'UNKNOWN_HTTP_CREDENTIAL', `${nodeLabel(node)} uses an HTTP credential that is not available — choose or create another credential.`, node.id)
+      } else if (foreignCredential) {
+        add(issues, 'error', 'HTTP_CREDENTIAL_NOT_OWNED', foreignHttpCredentialMessage(nodeLabel(node), foreignCredential.foreignOwner!, foreignCredential.host ?? 'this host'), node.id)
       }
       if (node.data.credentialResolverId && context.credentialResolvers && !credentialResolverIds.has(node.data.credentialResolverId)) {
         add(issues, 'error', 'UNKNOWN_CREDENTIAL_RESOLVER', `${nodeLabel(node)} uses a per-user credential resolver that is not available — choose another resolver.`, node.id)

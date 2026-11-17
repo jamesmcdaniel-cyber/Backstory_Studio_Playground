@@ -111,7 +111,8 @@ export async function publishFlowDraft(actor: PublishActor) {
   const graphTriggerType = triggerFromGraph(graph, existing.trigger).type
   const isEventTrigger = graphTriggerType === 'activity' || graphTriggerType === 'slack'
   const [context, slackConnected, org] = await Promise.all([
-    loadRunValidationContext(graph, { organizationId: actor.organizationId, userId: actor.userId }),
+    // Published runs act as the flow's owner — their HTTP credentials are the owner's to use.
+    loadRunValidationContext(graph, { organizationId: actor.organizationId, userId: actor.userId, credentialUserId: existing.userId ?? undefined }),
     graphTriggerType === 'slack' ? slackConfigured(actor.organizationId) : Promise.resolve(undefined),
     isEventTrigger
       ? prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { plan: true, kind: true } })

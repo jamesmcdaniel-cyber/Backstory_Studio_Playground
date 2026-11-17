@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
 import { approvalItemOf } from '@/lib/flows/item-approval'
+import { visibleApprovalWhere } from '@/lib/approvals/visibility'
 
 // Where an approval came from, resolved from its ambiguous executionId (which
 // holds EITHER an AgentExecution id OR a FlowRun id — no discriminator on the
@@ -30,9 +31,12 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   // and overflows the query engine's i64 into a 500.
   const skip = Math.min(Math.max(intParam(params.get('skip'), 0), 0), 1_000_000)
 
+  // Private agents' and flows' approvals are their owner's alone (and so are
+  // their names) — the same visibility rule as every other run surface.
+  const where = await visibleApprovalWhere(auth.organizationId, auth.dbUser.id, statusList.length ? statusList : ['pending'])
   // Fetch one extra row purely to learn whether another page exists.
   const page = await prisma.approvalRequest.findMany({
-    where: { organizationId: auth.organizationId, status: { in: statusList.length ? statusList : ['pending'] } },
+    where,
     orderBy: { createdAt: 'desc' },
     skip,
     take: take + 1,

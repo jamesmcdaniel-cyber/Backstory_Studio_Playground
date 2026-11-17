@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState } from 'react'
 import { indentOnTab } from '@/components/ui/textarea'
-import { ChevronRight, Download, Pencil, Play, RotateCcw, Save, Star, X } from 'lucide-react'
+import { ChevronRight, Download, Pencil, Play, RotateCcw, Save, Square, Star, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -379,6 +379,43 @@ export function pendingWaitsOf(run: FlowRunDetail | null | undefined): RunWaitin
   return run.waiting ? [run.waiting] : []
 }
 
+/** A run that is still live: Stop applies to it. */
+export function runIsStoppable(status: string | undefined): boolean {
+  return status === 'running' || status === 'waiting'
+}
+
+/**
+ * Stop for the selected run. A running run is asked to stop (it reads
+ * "cancelling" until the engine notices, between steps); a paused one stops on
+ * the spot. Shown only when the page passes onStop — i.e. to people who may
+ * run this flow.
+ */
+function StopRunButton({ runId, onStop }: { runId: string; onStop: (flowRunId: string) => Promise<void> }) {
+  const [stopping, setStopping] = useState(false)
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      data-testid="run-stop"
+      loading={stopping}
+      disabled={stopping}
+      onClick={async () => {
+        setStopping(true)
+        try {
+          await onStop(runId)
+        } catch {
+          // The page already surfaced the error.
+        } finally {
+          setStopping(false)
+        }
+      }}
+    >
+      <Square className="mr-1 h-3 w-3" aria-hidden="true" />
+      Stop
+    </Button>
+  )
+}
+
 /** Blue banner shown while a run is paused — carries the reply box for agent questions. */
 function WaitingBanner({
   waiting,
@@ -688,6 +725,7 @@ export function RunPanel({
   labelForNode,
   toolNameForNode,
   onReply,
+  onStopRun,
   onRerunFrom,
   onForkWithEdits,
   inputFields,
@@ -704,6 +742,8 @@ export function RunPanel({
   /** The tool a node calls, for artifact detection. Optional — shape detection covers callers without a graph. */
   toolNameForNode?: (nodeId: string) => string | null
   onReply?: (flowRunId: string, reply: string, stepKey?: string) => Promise<void>
+  /** Stop a running or paused run. Omit for people who may not run the flow. */
+  onStopRun?: (flowRunId: string) => Promise<void>
   onRerunFrom?: (runId: string, nodeId: string) => void
   onForkWithEdits?: (runId: string, nodeId: string, recordedOutput: unknown, runFailed: boolean) => void
   inputFields?: TriggerInputField[]
@@ -761,7 +801,10 @@ export function RunPanel({
         ) : (
           <>
             <div className="border-b border-border px-3 py-2">
-              <span className={cn('text-xs font-semibold capitalize', STATUS_TEXT[selected.status])}>{selected.status === 'running' ? <TypewriterStatus /> : selected.status}</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className={cn('text-xs font-semibold capitalize', STATUS_TEXT[selected.status])}>{selected.status === 'running' ? <TypewriterStatus /> : selected.status}</span>
+                {onStopRun && runIsStoppable(selected.status) && <StopRunButton key={selected.id} runId={selected.id} onStop={onStopRun} />}
+              </div>
               {runIsDegraded(selected.status, selected.steps, selected.degraded) && (
                 <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                   Some steps have warnings — the run finished, but parts of it came back empty, failed quietly, or skipped items. Open the marked steps below.

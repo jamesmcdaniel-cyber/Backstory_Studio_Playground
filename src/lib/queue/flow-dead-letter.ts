@@ -57,6 +57,13 @@ export interface FlowDeadLetterDeps {
   createQueue: typeof createQueue
   logger: Pick<typeof apiLogger, 'error' | 'warn'>
   capture: typeof captureError
+  /**
+   * What a run ended out of band owes (approvals superseded, the flow.failed
+   * signal, the error workflow, a waiting parent woken) — called only when
+   * the terminalize write actually moved the row. Optional so stubbed deps
+   * opt in.
+   */
+  onTerminalized?: (flowRunId: string, status: 'failed' | 'cancelled') => Promise<void>
 }
 
 const defaultDeps = (): FlowDeadLetterDeps => ({
@@ -64,7 +71,14 @@ const defaultDeps = (): FlowDeadLetterDeps => ({
   createQueue,
   logger: apiLogger,
   capture: captureError,
+  onTerminalized: async (flowRunId, status) => {
+    const { onFlowRunTerminalized } = await import('@/lib/flows/run-terminal-effects')
+    await onFlowRunTerminalized({ flowRunId, status })
+  },
 })
+
+/** What a `cancelling` run whose worker died reads once it is resolved. */
+export const DEAD_LETTER_CANCELLED_ERROR = 'Cancelled — the run stopped before it finished cancelling.'
 
 /**
  * Stop the owning run from saying `running`, whether or not the failure is
@@ -91,12 +105,27 @@ export async function terminalizeDeadLetteredFlowRun(
     // writes must never land a `failed` run with a step still `running`
     // forever, since the status guard means nothing ever revisits a `failed`
     // run to sweep steps it left behind.
-    await deps.db
-      .$transaction(async (tx) => {
+    const outcome = await deps.db
+      .$transaction(async (tx): Promise<'failed' | 'cancelled' | null> => {
         const terminalized = await tx.flowRun.updateMany({
           where: { id: input.flowRunId!, status: 'running' },
           data: { status: 'failed', error: input.error.slice(0, 300), finishedAt: new Date() },
         })
+        // A run the user asked to stop whose worker then died: nothing is
+        // left to notice `cancelling`, so it would read that forever. The
+        // user's intent stands — resolve it to `cancelled`.
+        if (!(terminalized as { count?: number } | undefined)?.count) {
+          const cancelled = await tx.flowRun.updateMany({
+            where: { id: input.flowRunId!, status: 'cancelling' },
+            data: { status: 'cancelled', error: DEAD_LETTER_CANCELLED_ERROR, finishedAt: new Date() },
+          })
+          if (!(cancelled as { count?: number } | undefined)?.count) return null
+          await tx.flowRunStep.updateMany({
+            where: { flowRunId: input.flowRunId!, status: 'running' },
+            data: { status: 'cancelled', error: DEAD_LETTER_CANCELLED_ERROR, finishedAt: new Date() },
+          })
+          return 'cancelled'
+        }
 
         // Sweep phantom 'running' step rows — but only when THIS call
         // actually failed the run: a run left untouched (already settled
@@ -106,12 +135,11 @@ export async function terminalizeDeadLetteredFlowRun(
         // never got a terminal write. Mirrors the interpreter's own
         // end-of-run sweep (execute-flow.ts) — without this a dead-lettered
         // run shows as failed while one of its steps sits `running` forever.
-        if ((terminalized as { count?: number } | undefined)?.count) {
-          await tx.flowRunStep.updateMany({
-            where: { flowRunId: input.flowRunId!, status: 'running' },
-            data: { status: 'failed', error: input.error.slice(0, 300), finishedAt: new Date() },
-          })
-        }
+        await tx.flowRunStep.updateMany({
+          where: { flowRunId: input.flowRunId!, status: 'running' },
+          data: { status: 'failed', error: input.error.slice(0, 300), finishedAt: new Date() },
+        })
+        return 'failed'
       })
       .catch((error: unknown) => {
         // Still non-throwing — the DLQ enqueue below must happen regardless —
@@ -130,7 +158,16 @@ export async function terminalizeDeadLetteredFlowRun(
           flowRunId: input.flowRunId,
           organizationId: input.organizationId,
         })
+        return null
       })
+    if (outcome && deps.onTerminalized) {
+      await deps.onTerminalized(input.flowRunId, outcome).catch((error: unknown) => {
+        deps.logger.error('dead-lettered flow run follow-up failed', {
+          flowRunId: input.flowRunId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
+    }
   }
 }
 

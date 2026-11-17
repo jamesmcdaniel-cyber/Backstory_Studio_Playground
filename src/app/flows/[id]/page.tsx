@@ -1554,6 +1554,7 @@ function FlowBuilder() {
       if (watched?.id === latest.id && watched.status !== latest.status) {
         if (latest.status === 'succeeded') toast.success('Flow ran.')
         else if (latest.status === 'failed') toast.error('The flow failed — check the step statuses.')
+        else if (latest.status === 'cancelled') toast('The run was stopped.')
         else if (latest.status === 'waiting') toast('The flow is waiting for your reply.', { action: { label: 'View', onClick: () => setActivePanel('runs') } })
       }
       watchedRun.current = { id: latest.id, status: latest.status }
@@ -1567,7 +1568,9 @@ function FlowBuilder() {
       const map: Record<string, StepStatus> = {}
       for (const step of target.steps as { nodeId: string; status: StepStatus }[]) map[step.nodeId] = step.status
       setStatusByNode(map)
-      const done = (r: FlowRunDetail) => ['succeeded', 'failed'].includes(r.status)
+      // `cancelled` is terminal too: polling a stopped run forever was the
+      // only thing it ever did.
+      const done = (r: FlowRunDetail) => ['succeeded', 'failed', 'cancelled'].includes(r.status)
       if (done(latest) && (!pinned || done(pinned)) && pollRef.current) {
         clearInterval(pollRef.current)
         pollRef.current = null
@@ -1613,7 +1616,7 @@ function FlowBuilder() {
   // Realtime streaming: when a run is live, subscribe to its channel and refresh
   // the instant a step changes (debounced to coalesce bursts) instead of waiting
   // for the 2s poll. The poll stays as a fallback when Supabase is unavailable.
-  const streamRunId = selectedRun && !['succeeded', 'failed'].includes(selectedRun.status) ? selectedRun.id : null
+  const streamRunId = selectedRun && !['succeeded', 'failed', 'cancelled'].includes(selectedRun.status) ? selectedRun.id : null
   const nudgeRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onStreamTick = useCallback(() => {
     if (nudgeRef.current) return
@@ -1867,6 +1870,27 @@ function FlowBuilder() {
         throw new Error(data.error ?? 'Could not send the reply.')
       }
       toast.success('Reply sent — resuming the flow.')
+      pollRuns()
+    },
+    [id, pollRuns],
+  )
+
+  // Stop a running or paused run from the Runs panel. A running run reads
+  // "cancelling" until the engine notices between steps; the poll picks up
+  // the terminal state and toasts it.
+  const stopRun = useCallback(
+    async (flowRunId: string) => {
+      const response = await fetch(`/api/flows/${id}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flowRunId }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        toast.error(data.error ?? 'Could not stop the run.')
+        throw new Error(data.error ?? 'Could not stop the run.')
+      }
+      toast(data.status === 'cancelling' ? 'Stopping the run…' : 'Run stopped.')
       pollRuns()
     },
     [id, pollRuns],
@@ -2969,6 +2993,7 @@ function FlowBuilder() {
               labelForNode={labelForNode}
               toolNameForNode={toolNameForNode}
               onReply={replyToRun}
+              onStopRun={stopRun}
               onRerunFrom={(runId, nodeId) => void rerunFromStep(runId, nodeId)}
               onForkWithEdits={(runId, nodeId, recordedOutput, runFailed) =>
                 void forkWithEdits(runId, nodeId, recordedOutput, runFailed)

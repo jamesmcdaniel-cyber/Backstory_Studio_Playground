@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { describeSubflowWait, type SubflowWait } from '@/lib/flows/subflow'
 // Node types whose FlowRunStep rows are written by the execute-flow ADAPTERS
 // (create-at-start + finish-at-end, so the run panel shows live status). The
 // interpreter's onStep must skip these or every such step gets a duplicate
@@ -82,8 +83,13 @@ export function retryWarnings(attempts: number, attemptErrors: string[]): string
   return attempts > 1 ? attemptErrors : []
 }
 
-/** What a paused child flow is asking, for the parent's waiting banner. */
-export async function subflowChildQuestion(childRunId: string, childName: string): Promise<string> {
+/**
+ * What a paused child flow is waiting ON — its real wait kind as well as its
+ * question — for the parent's waiting row and banner. Hard-coding 'input'
+ * here offered a reply box on the parent for a child paused on an approval or
+ * a timer, where a typed reply can only fail.
+ */
+export async function subflowChildWaiting(childRunId: string, childName: string): Promise<SubflowWait> {
   // FlowRunStep is transitively org-scoped (no organizationId column); the
   // child run id comes from this run's own org-scoped write, so a bare
   // flowRunId read cannot cross tenants.
@@ -91,6 +97,5 @@ export async function subflowChildQuestion(childRunId: string, childName: string
     where: { flowRunId: childRunId, status: 'waiting' },
     orderBy: { order: 'desc' },
   }).catch(() => null)
-  const question = (waitingStep?.output as { waiting?: { question?: string } } | null)?.waiting?.question
-  return question ? `${childName}: ${question}` : `"${childName}" paused to ask for input.`
+  return describeSubflowWait(waitingStep?.output, childName)
 }

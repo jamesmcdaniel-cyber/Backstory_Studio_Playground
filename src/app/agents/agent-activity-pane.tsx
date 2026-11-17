@@ -63,7 +63,9 @@ type RunDetails = {
   messages: Array<{ id: string; role: string; content: string; createdAt: string }>
 }
 
-export const groupOrder = ['running', 'cancelling', 'waiting_for_input', 'waiting_for_approval', 'waiting_for_external', 'failed', 'blocked', 'cancelled', 'completed'] as const
+// `pending` is a queued run no worker has picked up yet. It must render: the
+// agents page disables Run while one exists ("watch or stop it below").
+export const groupOrder = ['running', 'pending', 'cancelling', 'waiting_for_input', 'waiting_for_approval', 'waiting_for_external', 'failed', 'blocked', 'cancelled', 'completed'] as const
 type ActivityGroup = (typeof groupOrder)[number]
 
 // Keep the initial HQ view inside the available pane height. Counts remain
@@ -72,6 +74,7 @@ const INITIAL_RUNS_PER_GROUP = 1
 
 export const groupLabels: Record<string, string> = {
   running: 'Running',
+  pending: 'Queued',
   cancelling: 'Cancelling',
   waiting_for_input: 'Needs input',
   waiting_for_approval: 'Needs approval',
@@ -100,8 +103,9 @@ function runStatusIcon(status: string) {
     case 'blocked':
       return <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" aria-label="Not delivered" />
     case 'running':
-    case 'pending':
       return <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-blue-600" aria-label="Running" />
+    case 'pending':
+      return <CircleDashed className="h-4 w-4 shrink-0 text-blue-600" aria-label="Queued" />
     case 'cancelling':
       return <CircleDashed className="h-4 w-4 shrink-0 animate-spin text-fg-muted" aria-label="Cancelling" />
     case 'waiting_for_input':
@@ -536,13 +540,23 @@ function RunRow({
     if (!reply.trim() || replying) return
     setReplying(true)
     try {
-      await fetch(`/api/executions/${activity.id}/reply`, {
+      const response = await fetch(`/api/executions/${activity.id}/reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: reply }),
       })
+      const data = await response.json().catch(() => ({}))
+      // The route refuses with a reason (not waiting any more, waiting on an
+      // approval, the backend offline…). Say so and keep the draft, so the
+      // reply is not silently lost.
+      if (!response.ok || data.success === false) {
+        toast.error(data.error || 'Could not send the reply.')
+        return
+      }
       setReply('')
       onChanged()
+    } catch {
+      toast.error('Could not send the reply.')
     } finally {
       setReplying(false)
     }
@@ -834,6 +848,7 @@ export function AgentActivityPane({
             <div className="flex items-center gap-2 border-b bg-gray-50 px-4 py-2 text-sm font-medium">
               {groupStatus === 'completed' ? <CheckCircle2 className="h-4 w-4 text-green-600" /> :
                 groupStatus === 'running' ? <CircleDashed className="h-4 w-4 animate-spin text-blue-600" /> :
+                groupStatus === 'pending' ? <CircleDashed className="h-4 w-4 text-blue-600" /> :
                 groupStatus === 'cancelling' ? <CircleDashed className="h-4 w-4 animate-spin text-gray-400" /> :
                 groupStatus === 'waiting_for_input' || groupStatus === 'waiting_for_approval' ? <HelpCircle className="h-4 w-4 text-amber-500" /> :
                 groupStatus === 'waiting_for_external' ? <CircleDashed className="h-4 w-4 text-indigo-500" /> :

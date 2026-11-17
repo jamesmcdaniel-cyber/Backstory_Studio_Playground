@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { NextRequest } from 'next/server'
 import { withAuthenticatedApi, ApiError } from '@/lib/server/api-handler'
-import { decideApproval } from '@/lib/agents/approval'
+import { ApprovalDeliveryError, decideApproval } from '@/lib/agents/approval'
 import { scheduleApprovalResume } from '../resume'
 
 const schema = z.object({ decision: z.enum(['approve', 'reject']) })
@@ -24,6 +24,9 @@ export const POST = withAuthenticatedApi(async (request: NextRequest, auth) => {
     scheduleApprovalResume({ resume, resumeFlow })
     return { success: true, ...result }
   } catch (error) {
+    // The write failed after it was approved: the run paused on it still has
+    // to move on (with the failure), or it would wait forever.
+    if (error instanceof ApprovalDeliveryError) scheduleApprovalResume(error)
     if (error instanceof Error && error.message === 'Approval not found') {
       throw new ApiError('Approval not found', 404, 'NOT_FOUND')
     }

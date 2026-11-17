@@ -15,10 +15,10 @@ const graph: FlowGraph = {
   ],
 }
 
-function manifest(updatedAt = '2026-08-02T00:00:00.000Z', required = ['id'], models = ['agent-model', 'summary-model']) {
+function manifest(objective = 'Summarise the account', required = ['id'], models = ['agent-model', 'summary-model']) {
   return buildFlowExecutionManifest({
     graph,
-    agents: [{ id: 'a1', updatedAt }, { id: 'unused', updatedAt }],
+    agents: [{ id: 'a1', description: 'Agent', objective }, { id: 'unused', description: 'Unused', objective }],
     toolCatalog: [{ id: 'mcp1', tools: [{ name: 'read', inputSchema: { type: 'object', required } }] }],
     agentModel: models[0],
     summaryModel: models[1],
@@ -36,7 +36,7 @@ test('execution manifest is deterministic and excludes unused dependencies', () 
 test('agent revisions and tool schema drift invalidate a pinned manifest', () => {
   const pinned = manifest()
   assert.equal(executionManifestMatches(pinned, manifest()), true)
-  assert.equal(executionManifestMatches(pinned, manifest('2026-08-02T00:01:00.000Z')), false)
+  assert.equal(executionManifestMatches(pinned, manifest('Summarise the account, then email it')), false)
   assert.equal(executionManifestMatches(pinned, manifest(undefined, ['accountId'])), false)
 })
 
@@ -48,7 +48,7 @@ test('default-model env drift alone never invalidates a pinned manifest', () => 
   const pinned = manifest()
   assert.equal(executionManifestMatches(pinned, manifest(undefined, undefined, ['other-agent-model', 'other-summary-model'])), true)
   // ...but real dependency drift still fails even when models also differ.
-  assert.equal(executionManifestMatches(pinned, manifest('2026-08-02T00:01:00.000Z', undefined, ['other-agent-model', 'other-summary-model'])), false)
+  assert.equal(executionManifestMatches(pinned, manifest('Summarise the account, then email it', undefined, ['other-agent-model', 'other-summary-model'])), false)
 })
 
 test('a pinned tool absent from the current catalog is not drift', () => {
@@ -58,7 +58,7 @@ test('a pinned tool absent from the current catalog is not drift', () => {
   const pinned = manifest()
   const withoutTool = buildFlowExecutionManifest({
     graph,
-    agents: [{ id: 'a1', updatedAt: '2026-08-02T00:00:00.000Z' }],
+    agents: [{ id: 'a1', description: 'Agent', objective: 'Summarise the account' }],
     toolCatalog: [],
     agentModel: 'agent-model',
     summaryModel: 'summary-model',
@@ -73,4 +73,48 @@ test('a pinned tool absent from the current catalog is not drift', () => {
 
 test('legacy runs without a manifest remain resumable', () => {
   assert.equal(executionManifestMatches(null, manifest()), true)
+})
+
+// Regression: the manifest pinned AgentTask.updatedAt, an @updatedAt column
+// every completed run bumps (lastExecutedAt / executionCount / lastResult) —
+// including the run the flow's own agent step made. A flow whose agent step
+// finished before a pause therefore could never resume.
+test('an agent run bumping its own bookkeeping is not drift', () => {
+  const agent = { id: 'a1', description: 'Agent', objective: 'Summarise the account', goal: null, context: {}, metadata: { model: 'x' } }
+  const before = buildFlowExecutionManifest({ graph, agents: [{ ...agent, updatedAt: new Date('2026-08-02T00:00:00Z') } as never], toolCatalog: [], agentModel: 'm', summaryModel: 's' })
+  const after = buildFlowExecutionManifest({
+    graph,
+    agents: [{ ...agent, updatedAt: new Date('2026-08-02T00:05:00Z'), lastExecutedAt: new Date(), executionCount: 7, lastResult: { summary: 'done' } } as never],
+    toolCatalog: [],
+    agentModel: 'm',
+    summaryModel: 's',
+  })
+  assert.equal(executionManifestMatches(before, after), true)
+  assert.equal(before.dependencyHash, after.dependencyHash)
+})
+
+test('a config change is drift; a schedule change is not', () => {
+  const base = { id: 'a1', description: 'Agent', objective: 'Go', metadata: { tools: ['slack'] } }
+  const pin = (agent: Record<string, unknown>) => buildFlowExecutionManifest({ graph, agents: [agent as never], toolCatalog: [], agentModel: 'm', summaryModel: 's' })
+  const pinned = pin(base)
+  assert.equal(executionManifestMatches(pinned, pin({ ...base, metadata: { tools: ['slack', 'gmail'] } })), false)
+  // When an agent runs on its own has no bearing on what it does as a step.
+  assert.equal(executionManifestMatches(pinned, pin({ ...base, schedule: { cadence: 'daily' } })), true)
+})
+
+test('a published agent pins its published config, not the draft', () => {
+  const published = { description: 'Agent', objective: 'Published objective', connectorKeys: ['slack'] }
+  const pin = (agent: Record<string, unknown>) => buildFlowExecutionManifest({ graph, agents: [agent as never], toolCatalog: [], agentModel: 'm', summaryModel: 's' })
+  const pinned = pin({ id: 'a1', description: 'Agent', objective: 'Draft one', publishedConfig: published })
+  // Editing the draft changes nothing a run executes.
+  assert.equal(executionManifestMatches(pinned, pin({ id: 'a1', description: 'Agent', objective: 'Draft two', publishedConfig: published })), true)
+  // Republishing does.
+  assert.equal(executionManifestMatches(pinned, pin({ id: 'a1', description: 'Agent', objective: 'Draft two', publishedConfig: { ...published, objective: 'New published' } })), false)
+})
+
+test('a manifest pinned on updatedAt (before config revisions) still resumes', () => {
+  const legacy = { ...manifest(), agents: [{ id: 'a1', updatedAt: '2026-08-02T00:00:00.000Z' }], dependencyHash: 'legacy' }
+  assert.equal(executionManifestMatches(legacy, manifest('Something else entirely')), true)
+  // ...while a tool schema change still fails it.
+  assert.equal(executionManifestMatches(legacy, manifest(undefined, ['accountId'])), false)
 })

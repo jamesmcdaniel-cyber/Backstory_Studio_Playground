@@ -46,6 +46,12 @@ export interface DeadLetterDeps {
   createQueue: typeof createQueue
   logger: Pick<typeof apiLogger, 'error' | 'warn'>
   capture: typeof captureError
+  /**
+   * What a failed run owes beyond its status (owner notified, Slack thread
+   * answered, approvals superseded, live feed nudged) — called only when the
+   * terminalize write actually moved the row. Optional so stubbed deps opt in.
+   */
+  onTerminalized?: (executionId: string) => Promise<void>
 }
 
 const defaultDeps = (): DeadLetterDeps => ({
@@ -53,6 +59,10 @@ const defaultDeps = (): DeadLetterDeps => ({
   createQueue,
   logger: apiLogger,
   capture: captureError,
+  onTerminalized: async (executionId) => {
+    const { onAgentRunTerminalized } = await import('@/lib/agents/run-terminal-effects')
+    await onAgentRunTerminalized({ executionId, status: 'failed' })
+  },
 })
 
 /**
@@ -72,7 +82,7 @@ export async function terminalizeDeadLetteredExecution(
 ): Promise<void> {
   if (!input.executionId) return
   // systemPrisma: id-keyed terminal write from worker job data; execution id was minted org-scoped upstream.
-  await deps.db.agentExecution
+  const moved = await deps.db.agentExecution
     .updateMany({
       where: { id: input.executionId, status: { in: ['pending', 'running'] } },
       data: { status: 'failed', error: input.error.slice(0, 300), completedAt: new Date() },
@@ -94,7 +104,16 @@ export async function terminalizeDeadLetteredExecution(
         executionId: input.executionId,
         organizationId: input.organizationId,
       })
+      return undefined
     })
+  if ((moved as { count?: number } | undefined)?.count && deps.onTerminalized) {
+    await deps.onTerminalized(input.executionId).catch((error: unknown) => {
+      deps.logger.error('dead-lettered agent execution follow-up failed', {
+        executionId: input.executionId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+  }
 }
 
 export async function recordDeadLetter(

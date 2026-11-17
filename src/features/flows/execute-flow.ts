@@ -35,7 +35,7 @@ import { DEFAULT_AGENT_MODEL, DEFAULT_SUMMARY_MODEL } from '@/lib/llm/model-runn
 import { buildFlowExecutionManifest, executionManifestMatches, type FlowExecutionManifest } from '@/lib/flows/execution-manifest'
 import { runScopeKey } from '@/lib/flows/side-effect-ledger'
 import { parseFlowSettings } from '@/lib/flows/settings'
-import { settleRunApprovals } from './approval-settle'
+import { onFlowRunTerminalized } from '@/lib/flows/run-terminal-effects'
 import { injectTraceContext, withExtractedTraceContext, withSpan } from '@/lib/observability/otel'
 
 export type FlowExecutionJob = {
@@ -58,6 +58,12 @@ export type FlowExecutionJob = {
   replyStepKey?: string
   /** Scheduler capability: only resume the exact persisted timer occurrence. */
   expectedResumeAt?: string
+  /**
+   * Set when a CHILD flow run woke this one by finishing on its own (see
+   * wakeSubflowParent). The subflow step reads the child's outcome instead of
+   * forwarding a reply; carries no user text.
+   */
+  subflowWake?: { childRunId: string }
   // Scheduled/triggered runs execute the PUBLISHED graph; a manual builder run
   // executes the working draft so you can test before publishing.
   usePublished?: boolean
@@ -361,7 +367,14 @@ async function runFlowExecutionInner(
   // a long approval pause.
   let existingRun: Awaited<ReturnType<typeof prisma.flowRun.findFirst>> = null
   let replaySource: Awaited<ReturnType<typeof prisma.flowRun.findFirst>> = null
+  // The claim clears resumeAt; a rollback must put it back, or a timer wake
+  // that hits a transient preamble error is never woken again (the due-wait
+  // scan only looks at runs with a resumeAt).
+  let claimedResumeAt: Date | null = null
   if (resuming) {
+    claimedResumeAt = job.expectedResumeAt
+      ? new Date(job.expectedResumeAt)
+      : (await prisma.flowRun.findFirst({ where: { id: job.flowRunId, organizationId: job.organizationId }, select: { resumeAt: true } }))?.resumeAt ?? null
     const claimed = await prisma.flowRun.updateMany({
       where: { id: job.flowRunId, organizationId: job.organizationId, status: 'waiting', ...(job.expectedResumeAt ? { resumeAt: new Date(job.expectedResumeAt) } : {}) },
       data: { status: 'running', lastActiveAt: new Date(), resumeAt: null },
@@ -478,13 +491,19 @@ async function runFlowExecutionInner(
       // said). Terminalize instead — the failure becomes visible on the run,
       // with the reason on it. Same predicate as the dead-letter path, for
       // the same reason: a replay of this cannot succeed.
-      const terminal = isDeterministicUserFailure(error)
+      //
+      // Dependency drift is terminal here too: the run's pinned agents or
+      // tools really changed (agents pin a CONFIG revision, so an agent's own
+      // run bookkeeping no longer reads as drift), and no reply can make the
+      // run's two halves agree again. Rolling back would leave it `waiting`
+      // forever, every reply bouncing off the same check in silence.
+      const terminal = isDeterministicUserFailure(error) || (error as { code?: unknown } | null)?.code === 'FLOW_DEPENDENCY_DRIFT'
       const message = error instanceof Error ? error.message : 'This run could not be resumed.'
-      await prisma.flowRun.updateMany({
+      const rolledBack = await prisma.flowRun.updateMany({
         where: { id: job.flowRunId, organizationId: job.organizationId, status: 'running' },
         data: terminal
           ? { status: 'failed', error: message.slice(0, 300), finishedAt: new Date() }
-          : { status: 'waiting' },
+          : { status: 'waiting', resumeAt: claimedResumeAt },
       })
       if (terminal) {
         // A step left `waiting` would keep the run looking answerable in the
@@ -493,6 +512,12 @@ async function runFlowExecutionInner(
           where: { flowRunId: job.flowRunId, status: { in: ['waiting', 'running'] } },
           data: { status: 'failed', error: message.slice(0, 300), finishedAt: new Date() },
         })
+        // Approvals, the failure signal, the error workflow, a waiting
+        // parent — everything a failed run owes, which a bare status write
+        // here would skip. Only for the claim this call itself held.
+        if ((rolledBack as { count?: number } | undefined)?.count) {
+          await onFlowRunTerminalized({ flowRunId: job.flowRunId!, status: 'failed' })
+        }
       }
     }
     // A patch claim that never got to execute rolls back to `failed` — the
@@ -605,7 +630,7 @@ async function runFlowExecutionInner(
               // memory / extra tool connections) — n8n-style sub-node parity.
               ...(node.overrides ? { stepOverrides: node.overrides } : {}),
             },
-      )) as { summary?: string; status?: string; question?: string; executionId?: string }
+      )) as { summary?: string; status?: string; question?: string; executionId?: string; error?: string; degraded?: unknown }
 
       if (typeof result?.status === 'string' && result.status.startsWith('waiting')) {
         // Persist the pause reason on the step so the runs API can surface it.
@@ -622,8 +647,31 @@ async function runFlowExecutionInner(
         })
         return { waiting: { status: result.status, question: result.question } }
       }
+      // A `blocked` agent run finished its work but could not deliver it (a
+      // write integration never resolved). As a step that is a failure — the
+      // flow must not carry on as if the email went out — with the agent's
+      // own reason, so the step's onError routing applies as for any failure.
+      // A cancelled agent run (stopped from the agent's activity pane) did not
+      // produce the step's output either.
+      if (result?.status === 'blocked' || result?.status === 'cancelled') {
+        const message = result.status === 'cancelled'
+          ? 'The agent run was cancelled.'
+          : result.error || 'The agent could not deliver its result.'
+        await finishStep({ status: 'failed', error: truncateWithMarker(message, 300), agentExecutionId: result.executionId ?? null, finishedAt: new Date() })
+        return { error: message }
+      }
       const output = result?.summary ?? ''
-      await finishStep({ status: 'succeeded', output: jsonValue(output), agentExecutionId: result.executionId ?? null, finishedAt: new Date() })
+      // Degraded evidence (a search that timed out, a deliverable saved as a
+      // draft) becomes step warnings, so the run reads "succeeded with
+      // warnings" instead of a clean success.
+      const warnings = Array.isArray(result?.degraded) ? result.degraded.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0) : []
+      await finishStep({
+        status: 'succeeded',
+        output: jsonValue(output),
+        agentExecutionId: result.executionId ?? null,
+        finishedAt: new Date(),
+        ...(warnings.length ? { warnings } : {}),
+      })
       return { output }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -813,8 +861,9 @@ async function runFlowExecutionInner(
         where: { flowRunId: run.id, status: 'running' },
         data: { status: 'cancelled', finishedAt: new Date() },
       })
-      // A cancelled run's pending approvals must not stay approvable.
-      await settleRunApprovals({ organizationId: job.organizationId, runId: run.id, status: 'cancelled' }).catch(() => undefined)
+      // A cancelled run's pending approvals must not stay approvable, and a
+      // parent flow paused on this run as its subflow must learn it ended.
+      await onFlowRunTerminalized({ flowRunId: run.id, status: 'cancelled' })
       return { flowRunId: run.id, status: 'cancelled', output: null }
     }
     throw error

@@ -29,6 +29,7 @@
 import { systemPrisma } from '@/lib/prisma'
 import { AGENT_RUN_TIMEOUT_MS } from '@/lib/agents/timeouts'
 import { AGENT_HEARTBEAT_INTERVAL_MS } from '@/lib/agents/liveness'
+import { onAgentRunsTerminalized } from '@/lib/agents/run-terminal-effects'
 
 /**
  * No beat for this long means the run's process is gone. Fifteen beats: far
@@ -69,30 +70,33 @@ export async function reapStuckAgentExecutions(now: Date = new Date()): Promise<
   // systemPrisma (all four): global reaper sweep — runs across all orgs by design (CRON_SECRET-gated dispatch tick).
   // Ceiling first, so a run that is both past the ceiling and stale reads as
   // the stronger statement.
-  const ceiling = await systemPrisma.agentExecution.updateMany({
+  const ceiling = await systemPrisma.agentExecution.updateManyAndReturn({
     where: { status: inFlight, startedAt: { lt: ceilingBefore } },
     data: { status: 'failed', error: AGENT_CEILING_RUN_ERROR, completedAt: now },
+    select: { id: true },
   })
   // startedAt is checked too because a resume refreshes it but not the clock:
   // a run resumed after a long pause carries its old beat until its first
   // new one lands, and must not be reaped in that gap.
-  const stale = await systemPrisma.agentExecution.updateMany({
+  const stale = await systemPrisma.agentExecution.updateManyAndReturn({
     where: { status: 'running', startedAt: { lt: staleBefore }, lastActiveAt: { lt: staleBefore } },
     data: { status: 'failed', error: AGENT_STALE_RUN_ERROR, completedAt: now },
+    select: { id: true },
   })
   // `pending` rows never beat (nothing has claimed them yet), so they stay on
   // the startedAt rule alongside `running` rows that never beat.
-  const legacy = await systemPrisma.agentExecution.updateMany({
+  const legacy = await systemPrisma.agentExecution.updateManyAndReturn({
     where: {
       startedAt: { lt: legacyBefore },
       OR: [{ status: 'pending' }, { status: 'running', lastActiveAt: null }],
     },
     data: { status: 'failed', error: AGENT_LEGACY_TIMEOUT_ERROR, completedAt: now },
+    select: { id: true },
   })
   // A user hit cancel and then the process died: resolve it to `cancelled`
   // (it is otherwise un-cancellable and un-deletable). A live run notices a
   // cancel between turns and keeps beating until it does.
-  const cancelled = await systemPrisma.agentExecution.updateMany({
+  const cancelled = await systemPrisma.agentExecution.updateManyAndReturn({
     where: {
       status: 'cancelling',
       OR: [
@@ -102,6 +106,13 @@ export async function reapStuckAgentExecutions(now: Date = new Date()): Promise<
       ],
     },
     data: { status: 'cancelled', error: 'Cancelled (run did not stop in time)', completedAt: now },
+    select: { id: true },
   })
-  return { stale: stale.count, legacy: legacy.count, ceiling: ceiling.count, cancelled: cancelled.count }
+  // What the executor's own failure path would have done for each of these:
+  // tell the owner, answer the Slack thread, supersede approvals the run left
+  // pending, nudge the live feed. Ids come back from the guarded writes, so
+  // only rows this sweep actually moved are followed up — once.
+  await onAgentRunsTerminalized([...ceiling, ...stale, ...legacy].map((row) => row.id), 'failed')
+  await onAgentRunsTerminalized(cancelled.map((row) => row.id), 'cancelled')
+  return { stale: stale.length, legacy: legacy.length, ceiling: ceiling.length, cancelled: cancelled.length }
 }

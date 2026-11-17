@@ -23,6 +23,8 @@ import { detectPiiCategories } from '@/lib/security/pii-egress'
 import { McpToolBlockedError } from '@/lib/mcp/tool-policy'
 import { WarehouseToolClient, isWarehouseProvider, warehouseKindForTool } from '@/lib/warehouse/tools'
 import { describeApprovalItem, type ApprovalItem } from '@/lib/flows/item-approval'
+import { approvalRunEnded, hiddenApprovalExecutionIds } from '@/lib/approvals/visibility'
+import { ApiError } from '@/lib/server/api-handler'
 
 /** Delivery planes, used only to label an approval with a friendly capability. */
 const DELIVERY_PLANE = /^nango:(slack|gmail|salesforce)$/
@@ -230,6 +232,30 @@ export async function decideApproval(input: {
     where: { id: input.approvalId, organizationId: input.organizationId },
   })
   if (!approval) throw new Error('Approval not found')
+  // A private agent's or flow's approvals are its owner's alone — the same
+  // rule as every other run surface. Reported as not found, exactly like an
+  // approval in another workspace: the decider learns nothing about it.
+  const hidden = await hiddenApprovalExecutionIds(input.organizationId, input.deciderUserId, [approval.executionId])
+  if (hidden.size) throw new Error('Approval not found')
+  if (approval.status === 'pending') {
+    // An approval outlives its run only by accident — a run cancelled, reaped
+    // or dead-lettered before it was decided. Approving it now would execute
+    // a real write that no step will ever consume. Retire it and say why.
+    const run = await approvalRunEnded(input.organizationId, approval.executionId)
+    if (run.ended) {
+      await prisma.approvalRequest.updateMany({
+        where: { id: approval.id, organizationId: input.organizationId, status: 'pending' },
+        data: { status: 'superseded' },
+      })
+      throw new ApiError(
+        run.status
+          ? `This approval's run has already ended (${run.status}), so its action will not run. Start the run again if it is still needed.`
+          : "This approval's run no longer exists, so its action will not run.",
+        409,
+        'APPROVAL_RUN_ENDED',
+      )
+    }
+  }
   if (approval.status !== 'pending') {
     // Idempotent replay — but if the fire-and-forget flow resume crashed after
     // the decision was recorded, the run is stranded `waiting`. Hand the caller
@@ -354,7 +380,11 @@ export async function decideApproval(input: {
   } catch (error) {
     // Delivery failed after we claimed it — mark failed (not back to pending) so
     // a possibly-partial, non-idempotent write is never silently re-approved.
-    await prisma.approvalRequest.update({ where: { id: approval.id, organizationId: input.organizationId }, data: { status: 'failed' } }).catch(() => undefined)
+    const message = error instanceof Error ? error.message : String(error)
+    await prisma.approvalRequest.update({
+      where: { id: approval.id, organizationId: input.organizationId },
+      data: { status: 'failed', payload: { ...(approval.payload as Record<string, unknown>), outcome: { executed: false, error: message.slice(0, 2_000) } } as never },
+    }).catch(() => undefined)
     await recordAudit({
       organizationId: input.organizationId,
       executionId: approval.executionId,
@@ -364,7 +394,15 @@ export async function decideApproval(input: {
       resourceType: payload.provider,
       resourceId: approval.id,
     }).catch(() => undefined)
-    throw error
+    // The run paused on this approval must not hang on it. It resumes with the
+    // failure: an agent reads that its action did not go through (and must
+    // not claim it did), a flow tool step reads the `failed` row and fails
+    // with a pointer to the approval. The caller schedules the resume, then
+    // reports the delivery error.
+    const failedReply = failedDecisionReply(approval.id, message)
+    const resume = await resumeInfoFor(approval.executionId, input.organizationId, failedReply).catch(() => undefined)
+    const resumeFlow = resume ? undefined : await flowResumeInfoFor(approval.executionId, input.organizationId, failedReply, payload.userId).catch(() => undefined)
+    throw new ApprovalDeliveryError(message, { ...(resume ? { resume } : {}), ...(resumeFlow ? { resumeFlow } : {}) }, error)
   }
 
   // The outcome rides on the row: a flow run paused on several approvals
@@ -438,6 +476,32 @@ function approvedDecisionReply(approvalId: string, executed: boolean, result: un
   return JSON.stringify({ status: 'approved', approvalId, executed, result })
 }
 
+function failedDecisionReply(approvalId: string, error: string): string {
+  return JSON.stringify({
+    status: 'failed',
+    approvalId,
+    executed: false,
+    message: `The approved action failed to send: ${error.slice(0, 500)}. It did not go through — do not claim it did, and do not retry it automatically.`,
+  })
+}
+
+/**
+ * An approved write whose delivery threw. Carries what the caller must resume
+ * (the run paused on this approval) before reporting the error, so a failed
+ * delivery ends the wait instead of stranding the run.
+ */
+export class ApprovalDeliveryError extends Error {
+  readonly resume?: ResumeInfo
+  readonly resumeFlow?: FlowResumeInfo
+  constructor(message: string, resumeWith: Pick<DecideResult, 'resume' | 'resumeFlow'>, cause?: unknown) {
+    super(message)
+    this.name = 'ApprovalDeliveryError'
+    this.resume = resumeWith.resume
+    this.resumeFlow = resumeWith.resumeFlow
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause
+  }
+}
+
 function rejectedDecisionReply(approvalId: string): string {
   return JSON.stringify({ status: 'rejected', approvalId, message: 'The approver rejected this action. Do not retry it; continue without it.' })
 }
@@ -446,19 +510,23 @@ function rejectedDecisionReply(approvalId: string): string {
  * Retry path for a flow run stranded on an ALREADY-decided approval: the
  * decision was recorded but the fire-and-forget resume may have crashed. When
  * the run is still `waiting`, rebuild the same reply the normal decision path
- * sent so the caller can trigger the resume again. Undecided states
- * ('approving', 'failed', 'superseded') never resume — the winner/failure path
- * owns the first two, and a superseded approval's run already moved on.
+ * sent so the caller can trigger the resume again. 'approving' never resumes
+ * (the winning approver owns it) and neither does 'superseded' (its run
+ * already moved on).
  */
 async function flowResumeRetryInfo(
   approval: { id: string; status: string; executionId: string; payload: unknown },
   organizationId: string,
 ): Promise<FlowResumeInfo | undefined> {
-  if (approval.status !== 'approved' && approval.status !== 'rejected') return undefined
+  if (approval.status !== 'approved' && approval.status !== 'rejected' && approval.status !== 'failed') return undefined
+  // 'failed' resumes too: the failure path resumes the run itself, and this
+  // is the same retry for when that resume was lost. The step reads the row.
   const reply =
     approval.status === 'approved'
       ? approvedDecisionReply(approval.id, true, null)
-      : rejectedDecisionReply(approval.id)
+      : approval.status === 'failed'
+        ? failedDecisionReply(approval.id, String((approval.payload as { outcome?: { error?: unknown } } | null)?.outcome?.error ?? 'delivery failed'))
+        : rejectedDecisionReply(approval.id)
   const requesterUserId = (approval.payload as { userId?: string } | null)?.userId
   return flowResumeInfoFor(approval.executionId, organizationId, reply, requesterUserId)
 }

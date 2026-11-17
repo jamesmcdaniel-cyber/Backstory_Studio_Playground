@@ -247,13 +247,13 @@ if (TEST_DB) {
     assert.equal(row.replyTokenHash, null)
   })
 
-  test('external runs count against the daily run allowance like any agent run', async () => {
-    const { checkDailyRunAllowance } = await import('@/lib/usage/free-tier-limits')
+  test('external runs are recorded as the person\'s own agent runs', async () => {
+    // The daily run cap was lifted (2026-11-17), so this pins attribution — the
+    // fact a reinstated cap would count — rather than an allowance.
     const { view } = await register({ name: 'Counted' })
     const fresh = await prisma.user.create({ data: { supabaseId: crypto.randomUUID(), organizationId: orgId, name: 'Bea', isActive: true } })
     await runAgentExecution({ agentId: view.agentId, organizationId: orgId, userId: fresh.id, input: 'one' })
-    const allowance = await checkDailyRunAllowance('agent', { organizationId: orgId, userId: fresh.id, canReview: false, email: 'bea@customer.example' })
-    assert.equal(allowance.used, 1)
+    assert.equal(await prisma.agentExecution.count({ where: { organizationId: orgId, userId: fresh.id } }), 1)
   })
 
   test('pausing stops new tasks; removing revokes the key and fails runs still waiting', async () => {

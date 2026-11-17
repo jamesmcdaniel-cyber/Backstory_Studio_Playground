@@ -63,62 +63,18 @@ if (TEST_DB) {
     ...extra,
   })
 
-  test('a member is allowed up to the ceiling and refused at it', async () => {
-    const before = await checkDailyRunAllowance('agent', actor())
-    assert.equal(before.over, false)
-    assert.equal(before.used, 0)
-    assert.equal(before.limit, 5)
-
-    for (let i = 0; i < 4; i++) await runAt(seeded.organizationId, seeded.userId, new Date())
-    const under = await checkDailyRunAllowance('agent', actor())
-    assert.equal(under.used, 4)
-    assert.equal(under.over, false, 'the fifth run must still be allowed')
-
-    await runAt(seeded.organizationId, seeded.userId, new Date())
-    const at = await checkDailyRunAllowance('agent', actor())
-    assert.equal(at.used, 5)
-    assert.equal(at.over, true, 'the sixth run must be refused')
-  })
-
-  test('yesterday does not count against today', async () => {
-    const yesterday = new Date(Date.now() - 26 * 60 * 60 * 1000)
-    await runAt(neighbour.organizationId, neighbour.userId, yesterday)
-    const result = await checkDailyRunAllowance('agent', {
-      organizationId: neighbour.organizationId,
-      userId: neighbour.userId,
-      canReview: false,
-      email: 'other@customer.example',
-    })
-    assert.equal(result.used, 0)
-    assert.equal(result.over, false)
-  })
-
-  test("one person's runs do not consume another's allowance", async () => {
-    // `seeded` is already at its ceiling from the first test.
-    const mine = await checkDailyRunAllowance('agent', actor())
-    assert.equal(mine.over, true)
-
-    const theirs = await checkDailyRunAllowance('agent', {
-      organizationId: neighbour.organizationId,
-      userId: neighbour.userId,
-      canReview: false,
-      email: 'other@customer.example',
-    })
-    assert.equal(theirs.over, false)
-  })
-
-  test('a super admin is never blocked, however many runs they have started', async () => {
-    const reviewer = await checkDailyRunAllowance('agent', actor({ canReview: true }))
-    assert.equal(reviewer.over, false)
-
-    const owner = await checkDailyRunAllowance('agent', actor({ email: 'james.mcdaniel@backstory.ai' }))
-    assert.equal(owner.over, false)
-  })
-
-  test('flow runs are counted separately from agent runs', async () => {
-    // The agent ceiling is already reached; the flow allowance is untouched.
+  // The daily run caps were lifted for every user on 2026-11-17: the run
+  // ceilings are null, so no number of runs refuses anyone.
+  test('a member is never refused, however many runs they start in a day', async () => {
+    for (let i = 0; i < 12; i++) await runAt(seeded.organizationId, seeded.userId, new Date())
+    const agents = await checkDailyRunAllowance('agent', actor())
+    assert.equal(agents.over, false, 'twelve runs in a day — more than twice the old cap — still allowed')
     const flows = await checkDailyRunAllowance('flow', actor())
-    assert.equal(flows.used, 0)
     assert.equal(flows.over, false)
+  })
+
+  test('a super admin is never blocked either', async () => {
+    assert.equal((await checkDailyRunAllowance('agent', actor({ canReview: true }))).over, false)
+    assert.equal((await checkDailyRunAllowance('agent', actor({ email: 'james.mcdaniel@backstory.ai' }))).over, false)
   })
 }

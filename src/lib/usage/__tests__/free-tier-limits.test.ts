@@ -11,9 +11,10 @@ import {
   startOfUtcDay,
 } from '../free-tier-limits'
 
-test('the ceilings are the agreed numbers', () => {
-  assert.equal(FREE_TIER_LIMITS.agentRunsPerDay, 5)
-  assert.equal(FREE_TIER_LIMITS.flowRunsPerDay, 5)
+test('the ceilings are the agreed numbers: unlimited runs, three integrations', () => {
+  // Lifted for every user 2026-11-17 — null means no daily run ceiling.
+  assert.equal(FREE_TIER_LIMITS.agentRunsPerDay, null)
+  assert.equal(FREE_TIER_LIMITS.flowRunsPerDay, null)
   assert.equal(FREE_TIER_LIMITS.integrations, 3)
 })
 

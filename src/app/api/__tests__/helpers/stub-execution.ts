@@ -152,17 +152,23 @@ function restoreEnv(name: string, value: string | undefined): void {
 }
 
 /**
- * Put an actor exactly ON the daily run ceiling for `kind`.
+ * Runs written for a "busy day" when no daily ceiling is configured: twice the
+ * old cap of 5, so a test proves a person well past it is still let through.
+ */
+export const BUSY_DAY_RUNS = 10
+
+/**
+ * Put an actor ON the daily run ceiling for `kind` — or, with the ceilings
+ * lifted (null), give them a busy day of BUSY_DAY_RUNS runs.
  *
- * Writes `FREE_TIER_LIMITS[...]` rows stamped inside the current UTC day, which
- * is what checkDailyRunAllowance counts. Returns the number written so a test
- * can assert "no NEW row was created" against it.
+ * Writes rows stamped inside the current UTC day, which is what
+ * checkDailyRunAllowance counts. Returns the number written.
  */
 export async function fillDailyRunAllowance(
   prisma: any,
   args: { kind: RunKind; organizationId: string; userId: string; agentTaskId?: string; flowId?: string },
 ): Promise<number> {
-  const limit = args.kind === 'agent' ? FREE_TIER_LIMITS.agentRunsPerDay : FREE_TIER_LIMITS.flowRunsPerDay
+  const limit = (args.kind === 'agent' ? FREE_TIER_LIMITS.agentRunsPerDay : FREE_TIER_LIMITS.flowRunsPerDay) ?? BUSY_DAY_RUNS
   for (let i = 0; i < limit; i += 1) {
     if (args.kind === 'agent') {
       await prisma.agentExecution.create({

@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { Search, ShieldOff, ShieldCheck, KeyRound, RotateCcw, Gauge, Smartphone, Trash2 } from 'lucide-react'
+import { Search, ShieldOff, ShieldCheck, KeyRound, Gauge, Smartphone, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -353,12 +353,6 @@ export default function PlatformUsersPage() {
             <UserUsageDrilldown userId={selected.id} days={report?.days ?? 30} />
           </div>
 
-          {selected.runAllowanceResetAt && (
-            <p className="text-xs text-muted-foreground">
-              Daily run allowance was last reset {new Date(selected.runAllowanceResetAt).toLocaleString()}.
-            </p>
-          )}
-
           <div className="flex flex-wrap gap-2 border-t pt-4">
             <Button
               variant="secondary"
@@ -368,14 +362,9 @@ export default function PlatformUsersPage() {
               <KeyRound className="mr-2 h-4 w-4" />
               Send password reset
             </Button>
-            <Button
-              variant="secondary"
-              disabled={busy !== null}
-              onClick={() => void act(selected, 'reset-daily-runs')}
-            >
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Reset today&apos;s runs
-            </Button>
+            {/* No "Reset today's runs": the daily run caps were lifted for every
+                user (2026-11-17), so there is no allowance to reset. The
+                reset-daily-runs action stays on the API for when a cap returns. */}
             <Button
               variant="secondary"
               disabled={busy !== null || !selected.organizationId}

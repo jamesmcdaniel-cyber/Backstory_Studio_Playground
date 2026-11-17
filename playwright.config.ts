@@ -14,7 +14,7 @@ import { STORAGE_STATE, isLocalTarget } from './e2e/support/env'
  *    to catch product regressions, not rendering differences, and running nine
  *    journeys three times would triple the wall clock to re-answer a question
  *    the anonymous projects already ask.
- *  - `authenticated (limits)` — the free-tier ceiling, which SPENDS the test
+ *  - `authenticated (limits)` — the busy-day run journey (no daily cap), which writes run rows for the test
  *    user's daily allowance and so must run after every other journey. Serial
  *    and last, by declaring the authenticated project as its dependency.
  */

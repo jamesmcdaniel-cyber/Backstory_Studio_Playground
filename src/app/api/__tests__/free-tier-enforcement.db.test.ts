@@ -14,9 +14,11 @@ import { NextRequest } from 'next/server'
  * coverage that did not exist. Removing `if (allowance.over) throw ...` from any
  * of them was a green build.
  *
- * Each route gets the same three cases:
- *   over the cap    → the canonical 429 AND the downstream side effect (a run
- *                     row, a minted Nango session) never happens;
+ * The daily RUN ceilings were lifted on 2026-11-17 (null in FREE_TIER_LIMITS),
+ * so the run routes are now pinned the other way: a person with a busy day of
+ * runs is still let through. The integration ceiling keeps three cases:
+ *   over the cap    → the canonical 429 AND the downstream side effect (a
+ *                     minted Nango session) never happens;
  *   under the cap   → the request gets PAST the gate, stopping at a stubbed
  *                     boundary rather than a live model or a live Nango;
  *   super admin     → exempt, per isUnlimitedActor.
@@ -173,21 +175,17 @@ async function assertLimitResponse(response: Response, code: string) {
 
 // ---------------------------------------------------------------- flow runs
 
-test('a flow run over the daily cap is refused, and no run is started', { skip }, async () => {
+// The daily run caps were lifted for every user on 2026-11-17 (FREE_TIER_LIMITS
+// run ceilings are null). The fixture that used to sit ON the cap now has a
+// busy day of runs behind it — and must still be let through.
+test('a member with a busy day of flow runs still starts another: no daily cap', { skip }, async () => {
   installTestAuth(capped.auth)
   const before = await countFlowRuns(capped)
   const response = await runFlow(flowId.capped)
-  await assertLimitResponse(response, 'DAILY_LIMIT_REACHED')
-  assert.equal(await countFlowRuns(capped), before, 'the refused call must not create a FlowRun')
-})
-
-test('the flow cap is checked BEFORE the flow is looked up', { skip }, async () => {
-  installTestAuth(capped.auth)
-  // Same call, an id that does not exist. A capped caller must still see 429 —
-  // if the lookup ran first this would be 404, and the ceiling would be
-  // trivially probeable for which flows exist.
-  const response = await runFlow('does-not-exist')
-  await assertLimitResponse(response, 'DAILY_LIMIT_REACHED')
+  const body = await helpers.readJson(response)
+  assert.notEqual(response.status, 429, JSON.stringify(body))
+  assert.notEqual(body.code, 'DAILY_LIMIT_REACHED')
+  assert.equal(await countFlowRuns(capped), before + 1, 'the run must be started')
 })
 
 test('under the cap, a flow run reaches the execution layer', { skip }, async () => {
@@ -219,18 +217,14 @@ test('a super admin is exempt from the daily flow cap', { skip }, async () => {
 
 // --------------------------------------------------------------- agent runs
 
-test('an agent run over the daily cap is refused, and no execution is created', { skip }, async () => {
+test('a member with a busy day of agent runs still starts another: no daily cap', { skip }, async () => {
   installTestAuth(capped.auth)
   const before = await countAgentRuns(capped)
   const response = await runAgent(agentId.capped, { input: 'hello' })
-  await assertLimitResponse(response, 'DAILY_LIMIT_REACHED')
-  assert.equal(await countAgentRuns(capped), before, 'the refused call must not create an AgentExecution')
-})
-
-test('the agent cap is checked BEFORE the agent is looked up', { skip }, async () => {
-  installTestAuth(capped.auth)
-  const response = await runAgent('does-not-exist', { input: 'hello' })
-  await assertLimitResponse(response, 'DAILY_LIMIT_REACHED')
+  const body = await helpers.readJson(response)
+  assert.notEqual(response.status, 429, JSON.stringify(body))
+  assert.equal(body.code, 'WORKER_DISABLED', 'past the gate, at the stubbed dispatch boundary')
+  assert.equal(await countAgentRuns(capped), before + 1, 'the execution must be created')
 })
 
 test('under the cap, an agent run reaches the dispatch boundary', { skip }, async () => {

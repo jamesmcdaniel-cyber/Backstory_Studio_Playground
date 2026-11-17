@@ -1,103 +1,62 @@
 /**
- * Journey: hit the free-tier ceiling and be told, in plain English, why.
+ * Journey: a busy day of runs is never refused.
  *
- * Nothing is stubbed. The refusal comes from the real gate in
- * src/lib/usage/free-tier-limits.ts, reached through the real execute route.
- * Stubbing a 429 and asserting the toast would test only that sonner renders
- * text — it would keep passing if the ceiling were removed entirely, which is
- * the single failure this spec exists to catch.
+ * The per-person daily run caps were lifted for every user on 2026-11-17
+ * (FREE_TIER_LIMITS run ceilings are null in src/lib/usage/free-tier-limits.ts).
+ * This journey used to prove the cap refused the sixth run; it now proves the
+ * opposite through the real execute route, with nothing stubbed — so quietly
+ * reinstating a cap fails here, where someone will see it.
  *
- * ── Why this project runs last, and alone ────────────────────────────────
- * Arranging this journey means SPENDING the test user's daily allowance, and
- * the allowance is per person per UTC day. Any other journey that started a
- * run afterwards would be refused for reasons of its own. So this file is its
- * own Playwright project, declared to depend on the authenticated project, and
- * it restores a fresh allowance afterwards.
+ * ── Why this project still runs last, and alone ──────────────────────────
+ * Arranging it writes a busy day of run rows for the test user. They are
+ * cleared afterwards, but nothing else should start runs while they exist.
  *
  * ── Why it can skip, loudly ──────────────────────────────────────────────
- * Two preconditions cannot be met from the browser:
- *  - A refusal must be arranged server-side (E2E_DATABASE_URL).
- *  - The actor must not be exempt. Anyone holding `catalogue.review` bypasses
- *    every ceiling, so a super-admin test user can NEVER produce this refusal
- *    and a spec that "passed" for them would be asserting nothing.
- * Both are announced as skips naming the fix, never as silent passes.
+ *  - The busy day is arranged server-side (E2E_DATABASE_URL).
+ *  - A super-admin test user (catalogue.review) was never capped, so for them
+ *    this would assert nothing. Both are announced as skips naming the fix.
  */
 import { E2E_FLOW_PREFIX, createBlankFlow, expect, renameFlow, test } from '../support/fixtures'
 import { buildRunnableFlow } from '../support/builder'
-import { FREE_TIER_FLOW_RUNS_PER_DAY, LIMIT_MESSAGE } from '../support/limits'
+import { BUSY_DAY_FLOW_RUNS } from '../support/limits'
 import { seedSkipReason } from '../support/env'
 import { clearSeededRuns, deleteFlowsNamed, fillDailyFlowRunAllowance, grantFreshRunAllowance } from '../support/seed'
 
 test.describe.configure({ mode: 'serial' })
 
-test('a person who has used their daily runs is refused, and told when it resets', async ({ page, workspace }) => {
+test('a person with a busy day of flow runs still starts another — no daily cap', async ({ page, workspace }) => {
   const seedReason = seedSkipReason()
   test.skip(Boolean(seedReason), seedReason ?? '')
   test.skip(
     workspace.canReview,
-    'The end-to-end user holds catalogue.review and is therefore exempt from every free-tier ceiling ' +
-      '(isUnlimitedActor). Point E2E_USER_EMAIL at a plain ADMIN or USER account to cover this journey.',
+    'The end-to-end user holds catalogue.review and was never capped (isUnlimitedActor). ' +
+      'Point E2E_USER_EMAIL at a plain ADMIN or USER account to cover this journey.',
   )
 
-  const flowName = `${E2E_FLOW_PREFIX}limit ${Date.now()}`
+  const flowName = `${E2E_FLOW_PREFIX}busy-day ${Date.now()}`
   const flowId = await createBlankFlow(page)
   await renameFlow(page, flowName)
   await buildRunnableFlow(page, 'Greeting')
 
   try {
-    // Start from a known window, then consume exactly the allowance. Doing
-    // both makes the arrangement independent of whatever else ran today.
     await grantFreshRunAllowance(workspace.userId)
     await fillDailyFlowRunAllowance({
       organizationId: workspace.organizationId,
       userId: workspace.userId,
       flowId,
-      count: FREE_TIER_FLOW_RUNS_PER_DAY,
+      count: BUSY_DAY_FLOW_RUNS,
     })
 
+    // At the API, because the route is reachable directly and is where a cap
+    // would be enforced.
+    const response = await page.request.post(`/api/flows/${flowId}/execute`, { data: {} })
+    const body = await response.json().catch(() => ({}))
+    expect(response.status(), JSON.stringify(body)).not.toBe(429)
+    expect(body.code).not.toBe('DAILY_LIMIT_REACHED')
+
+    // And in the builder: Run starts a run, with no limit sentence anywhere.
     await page.getByRole('button', { name: 'Run', exact: true }).click()
-
-    // The exact sentence, not a substring of it and not a status code: this is
-    // the whole of what the user gets, and "you have hit a limit" is only
-    // useful if it also says which limit and when it lifts.
-    await expect(
-      page.getByText(LIMIT_MESSAGE.flowRuns(FREE_TIER_FLOW_RUNS_PER_DAY)),
-      'the daily run ceiling did not refuse the run, or refused it without telling the user why',
-    ).toBeVisible()
-  } finally {
-    // Restore the account before anything else touches it, even on failure.
-    await clearSeededRuns(flowId)
-    await grantFreshRunAllowance(workspace.userId)
-    await deleteFlowsNamed(workspace.organizationId, flowName)
-  }
-})
-
-test('the refusal is the server\'s, not the page\'s', async ({ page, workspace }) => {
-  const seedReason = seedSkipReason()
-  test.skip(Boolean(seedReason), seedReason ?? '')
-  test.skip(workspace.canReview, 'The end-to-end user is exempt from the free-tier ceilings (catalogue.review).')
-
-  const flowName = `${E2E_FLOW_PREFIX}limit-api ${Date.now()}`
-  const flowId = await createBlankFlow(page)
-  await renameFlow(page, flowName)
-  await buildRunnableFlow(page, 'Greeting')
-
-  try {
-    await grantFreshRunAllowance(workspace.userId)
-    await fillDailyFlowRunAllowance({
-      organizationId: workspace.organizationId,
-      userId: workspace.userId,
-      flowId,
-      count: FREE_TIER_FLOW_RUNS_PER_DAY,
-    })
-
-    // Asserted at the API as well as in the UI, because a ceiling enforced only
-    // in the client is not a ceiling — the route is reachable directly.
-    const refused = await page.request.post(`/api/flows/${flowId}/execute`, { data: {} })
-    expect(refused.status()).toBe(429)
-    const body = await refused.json()
-    expect(body.code).toBe('DAILY_LIMIT_REACHED')
-    expect(body.error).toBe(LIMIT_MESSAGE.flowRuns(FREE_TIER_FLOW_RUNS_PER_DAY))
+    await expect(page.getByText(/runs for today/)).toHaveCount(0)
   } finally {
     await clearSeededRuns(flowId)
     await grantFreshRunAllowance(workspace.userId)

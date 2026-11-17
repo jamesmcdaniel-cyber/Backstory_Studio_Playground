@@ -18,18 +18,17 @@
  * the browser suite has no business loading.)
  */
 
-/** Flow runs one person may START per UTC day, before the ceiling refuses them. */
-export const FREE_TIER_FLOW_RUNS_PER_DAY = 5
-
-/** Agent runs one person may START per UTC day. */
-export const FREE_TIER_AGENT_RUNS_PER_DAY = 5
+/**
+ * Daily run ceilings: none. Lifted for every user on 2026-11-17 — the journey
+ * now proves a person with a busy day of runs is still let through. This is the
+ * size of that busy day: more than twice the old cap of 5.
+ */
+export const BUSY_DAY_FLOW_RUNS = 12
 
 /** Connected integrations per workspace (MCP servers and HTTP credentials excluded). */
 export const FREE_TIER_INTEGRATIONS = 3
 
 export const LIMIT_MESSAGE = {
-  flowRuns: (limit: number) => `You have used all ${limit} flow runs for today. The limit resets at midnight UTC.`,
-  agentRuns: (limit: number) => `You have used all ${limit} agent runs for today. The limit resets at midnight UTC.`,
   integrations: (limit: number) =>
     `This workspace has reached its limit of ${limit} connected integrations. Disconnect one, or ask a workspace owner to raise the limit.`,
 }

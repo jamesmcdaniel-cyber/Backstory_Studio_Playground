@@ -15,14 +15,26 @@ import { prisma } from '@/lib/prisma'
 import { isUsageExemptEmail } from '@/lib/usage/budget'
 import { listConnectedProviders, type ConnectedProvider } from '@/lib/integrations/connected'
 
-export const FREE_TIER_LIMITS = {
-  /** Agent runs a person may START per UTC day. */
-  agentRunsPerDay: 5,
-  /** Flow runs a person may START per UTC day. */
-  flowRunsPerDay: 5,
+/**
+ * `null` = no ceiling. The daily run caps were lifted for every user on
+ * 2026-11-17 (James: "remove the usage cap for all users and give them
+ * unlimited runs for agents and flows"). The enforcement seam stays — every
+ * run route still asks checkDailyRunAllowance — so a cap can come back as a
+ * one-line change here, but nobody is refused a run today. The workspace's
+ * monthly TOKEN budget (budget.ts) is a separate, per-workspace setting.
+ */
+export const FREE_TIER_LIMITS: {
+  agentRunsPerDay: number | null
+  flowRunsPerDay: number | null
+  integrations: number
+} = {
+  /** Agent runs a person may START per UTC day. Null: unlimited. */
+  agentRunsPerDay: null,
+  /** Flow runs a person may START per UTC day. Null: unlimited. */
+  flowRunsPerDay: null,
   /** Connected integrations per workspace, excluding MCP servers and HTTP APIs. */
   integrations: 3,
-} as const
+}
 
 export type RunKind = 'agent' | 'flow'
 
@@ -94,7 +106,8 @@ export async function checkDailyRunAllowance(
   args: { organizationId: string; userId: string; canReview: boolean; email?: string | null },
 ): Promise<AllowanceResult> {
   const limit = kind === 'agent' ? FREE_TIER_LIMITS.agentRunsPerDay : FREE_TIER_LIMITS.flowRunsPerDay
-  if (isUnlimitedActor(args)) return { over: false, used: 0, limit: 0 }
+  // No ceiling configured: nothing to count, nobody refused.
+  if (limit === null || isUnlimitedActor(args)) return { over: false, used: 0, limit: 0 }
 
   // One extra read, only for people who are actually capped: an operator may
   // have granted this person a fresh allowance part-way through the day.

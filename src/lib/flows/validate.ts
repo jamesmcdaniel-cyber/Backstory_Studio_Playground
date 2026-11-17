@@ -6,6 +6,7 @@ import { matchBrandHint, type ToolBrand } from '@/lib/flows/tool-presentation'
 import { buildAdjacency, findCycle } from '@/lib/flows/dag-scheduler'
 import { nodeVersionProblem } from '@/lib/flows/node-versions'
 import { toolArgumentIssues } from '@/lib/flows/tool-argument-validation'
+import { warehouseToolIsWrite } from '@/lib/warehouse/tool-classify'
 
 export type FlowValidationIssue = {
   level: 'error' | 'warning'
@@ -16,7 +17,13 @@ export type FlowValidationIssue = {
 
 export type FlowValidationContext = {
   agents?: { id: string; title?: string }[]
-  toolCatalog?: { id: string; name?: string; tools?: { name: string; inputSchema?: unknown }[]; toolsError?: string; blockedTools?: string[] }[]
+  toolCatalog?: {
+    id: string
+    name?: string
+    tools?: { name: string; inputSchema?: unknown; isWrite?: boolean; writeDependsOnArgs?: boolean; needsApproval?: boolean }[]
+    toolsError?: string
+    blockedTools?: string[]
+  }[]
   /** Reusable HTTP credentials visible to the executing workspace. */
   httpCredentials?: { id: string }[]
   /** Per-user runtime credential placeholders visible to the workspace. */
@@ -38,6 +45,14 @@ export type FlowValidationContext = {
    * triggers stay configurable for everyone; only arming is gated.
    */
   eventTriggerEntitled?: boolean
+  /**
+   * Check a polling trigger's connection and tool against `toolCatalog`: that
+   * they exist, and that the tool is one the poller will actually run (a read,
+   * not held for approval, given its required arguments). Set by publish and
+   * the builder's checker. A run or a resume never polls, so its validation
+   * leaves this off and need not load the trigger's connection.
+   */
+  checkPollTool?: boolean
   requireRunnable?: boolean
   /** The flow being validated — lets subflow steps flag direct self-reference. */
   flowId?: string
@@ -203,7 +218,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validateTriggerConfig(
   issues: FlowValidationIssue[],
   trigger: unknown,
-  context: Pick<FlowValidationContext, 'webhookSecretConfigured' | 'slackWorkspaceConnected' | 'eventTriggerEntitled'> = {},
+  context: Pick<FlowValidationContext, 'webhookSecretConfigured' | 'slackWorkspaceConnected' | 'eventTriggerEntitled' | 'checkPollTool' | 'toolCatalog'> = {},
 ) {
   if (trigger === undefined) return
   if (!isRecord(trigger)) {
@@ -247,6 +262,7 @@ function validateTriggerConfig(
     if (!isRecord(trigger.schedule)) {
       add(issues, 'error', 'MISSING_POLL_SCHEDULE', 'A polling trigger needs a check frequency.', 'trigger')
     }
+    if (context.checkPollTool && context.toolCatalog) validatePollTool(issues, trigger, context.toolCatalog)
     return
   }
   if (type === 'signal' && !String(trigger.signal ?? '').trim()) {
@@ -289,6 +305,72 @@ function validateTriggerConfig(
   }
   if (scheduleType === 'cron' && !String(schedule.cron ?? '').trim()) {
     add(issues, 'error', 'MISSING_CRON', 'Cron scheduled triggers need a cron expression.', 'trigger')
+  }
+}
+
+/**
+ * The poller calls its tool every tick, as the flow's owner, with no person
+ * there to approve anything — so it refuses write tools and tools held for
+ * approval, and a tool missing a required argument just fails. Each of those
+ * used to publish fine and then never fire, with only a server log to show for
+ * it. Say so at publish (and in the builder) instead.
+ */
+function validatePollTool(
+  issues: FlowValidationIssue[],
+  trigger: Record<string, unknown>,
+  catalog: NonNullable<FlowValidationContext['toolCatalog']>,
+) {
+  const connectionId = String(trigger.connectionId ?? '').trim()
+  const toolName = String(trigger.toolName ?? '').trim()
+  if (!connectionId || !toolName) return
+  const connection = catalog.find((entry) => entry.id === connectionId)
+  if (!connection) {
+    add(issues, 'error', 'UNKNOWN_POLL_CONNECTION', 'The app this polling trigger checks is no longer available — pick another connection.', 'trigger')
+    return
+  }
+  if (connection.toolsError) {
+    add(issues, 'error', 'POLL_CONNECTION_UNAVAILABLE', `The polling trigger can't reach ${connection.name || 'its app'} — reconnect it in Integrations and try again.`, 'trigger')
+    return
+  }
+  if (connection.blockedTools?.includes(toolName)) {
+    add(issues, 'error', 'POLL_TOOL_BLOCKED', `The polling trigger checks ${toolName}, which is turned off for ${connection.name || 'this app'} in Integrations — turn it back on there or pick another action.`, 'trigger')
+    return
+  }
+  const tool = (connection.tools ?? []).find((entry) => entry.name === toolName)
+  if (!tool) {
+    if (connection.tools?.length) {
+      add(issues, 'error', 'UNKNOWN_POLL_TOOL', 'The polling trigger checks an action that is not available on its app — pick another.', 'trigger')
+    }
+    return
+  }
+  if (tool.needsApproval) {
+    add(issues, 'error', 'POLL_TOOL_NEEDS_APPROVAL', `${toolName} needs approval in Integrations, and a polling trigger can't stop to ask — allow it there or pick another action.`, 'trigger')
+  }
+  let args: Record<string, unknown> | null = {}
+  if (typeof trigger.args === 'string') {
+    args = parseObjectJson(trigger.args)
+    if (!args) add(issues, 'error', 'INVALID_POLL_ARGS', 'The polling trigger\'s action inputs must be a JSON object.', 'trigger')
+  } else if (isRecord(trigger.args)) {
+    args = trigger.args
+  }
+  const writes = tool.writeDependsOnArgs ? warehouseToolIsWrite(toolName, args ?? undefined) : tool.isWrite === true
+  if (writes) {
+    add(
+      issues,
+      'error',
+      'POLL_TOOL_WRITES',
+      tool.writeDependsOnArgs
+        ? `A polling trigger can only read — give ${toolName} a read-only query (SELECT) in its inputs.`
+        : `A polling trigger can only read, and ${toolName} changes things — pick a read action (e.g. list or search).`,
+      'trigger',
+    )
+  }
+  if (args) {
+    for (const argName of requiredToolArgs(tool.inputSchema)) {
+      if (!argHasValue(args[argName])) {
+        add(issues, 'error', 'MISSING_POLL_TOOL_ARG', `The polling trigger's action needs "${argName}" — fill it in under its inputs.`, 'trigger')
+      }
+    }
   }
 }
 

@@ -40,11 +40,19 @@ export interface RunValidationScope {
 }
 
 /** Connections and credentials this graph actually references — nothing else is fetched. */
-function referencedIds(graph: FlowGraph) {
+function referencedIds(graph: FlowGraph, options: RunValidationOptions = {}) {
   const connectionIds = new Set<string>()
   const credentialIds = new Set<string>()
   const credentialResolverIds = new Set<string>()
   for (const node of graph.nodes) {
+    // A polling trigger calls a tool too. Only publish asks about it (see
+    // checkPollTool): a run or resume never polls, so it doesn't load it.
+    if (node.type === 'trigger' && options.includePollTrigger) {
+      const trigger = node.data.trigger as { type?: unknown; connectionId?: unknown } | undefined
+      if (trigger?.type === 'poll' && typeof trigger.connectionId === 'string' && trigger.connectionId.trim()) {
+        connectionIds.add(trigger.connectionId.trim())
+      }
+    }
     if (node.type === 'tool' || node.type === 'http') {
       if (node.data.connectionId) connectionIds.add(node.data.connectionId)
     }
@@ -57,11 +65,17 @@ function referencedIds(graph: FlowGraph) {
   return { connectionIds: [...connectionIds], credentialIds: [...credentialIds], credentialResolverIds: [...credentialResolverIds] }
 }
 
+export interface RunValidationOptions {
+  /** Also load the polling trigger's connection (publish validation). */
+  includePollTrigger?: boolean
+}
+
 export async function loadRunValidationContext(
   graph: FlowGraph,
   scope: RunValidationScope,
+  options: RunValidationOptions = {},
 ): Promise<RunValidationContext> {
-  const { connectionIds, credentialIds, credentialResolverIds } = referencedIds(graph)
+  const { connectionIds, credentialIds, credentialResolverIds } = referencedIds(graph, options)
   const agentIds = [...new Set(graph.nodes.flatMap(node => node.type === 'agent' ? [node.data.agentId] : []))]
   const [agents, toolCatalog, httpCredentials, credentialResolvers] = await Promise.all([
     agentIds.length ? prisma.agentTask.findMany({

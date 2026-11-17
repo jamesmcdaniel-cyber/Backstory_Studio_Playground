@@ -6,6 +6,8 @@ import { assertFlowEditable } from '@/lib/flows/access'
 import { serializeFlow } from '@/lib/flows/serialize'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
+import { flowGraphSchema } from '@/lib/flows/graph'
+import { draftGraphTriggerColumns } from '@/lib/flows/trigger-columns'
 
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value ?? null))
@@ -104,7 +106,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
 
   const flow = await prisma.flow.findFirst({
     where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },
-    select: { id: true, visibility: true, userId: true, graph: true },
+    select: { id: true, visibility: true, userId: true, graph: true, trigger: true, publishedGraph: true },
   })
   if (!flow) throw new ApiError('Flow not found', 404, 'NOT_FOUND')
   assertFlowEditable(flow, auth.dbUser.id)
@@ -132,7 +134,16 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // What the restore changes vs the current draft — same summary a manual
   // save gets, so the timeline row explains itself.
   const summary = summarizeGraphChange(flow.graph, graph)
-  const updated = await prisma.flow.update({ where: { id, organizationId: auth.organizationId }, data: { graph: jsonValue(graph) } })
+  // The restored graph is the new DRAFT, so its trigger is synced exactly as a
+  // draft save syncs it: into the trigger columns while nothing is published
+  // (else a restored webhook flow kept the old trigger type and 409'd), and
+  // not at all once it is — the live trigger changes only when published.
+  const parsedGraph = flowGraphSchema.safeParse(graph)
+  const triggerColumns = parsedGraph.success ? draftGraphTriggerColumns(parsedGraph.data, flow) : null
+  const updated = await prisma.flow.update({
+    where: { id, organizationId: auth.organizationId },
+    data: { graph: jsonValue(graph), ...(triggerColumns ?? {}) },
+  })
   // The restore is itself an edit: snapshot the resulting draft so its own
   // timeline row is viewable/restorable like any other. Best-effort.
   const snapshot = await prisma.flowEditSnapshot

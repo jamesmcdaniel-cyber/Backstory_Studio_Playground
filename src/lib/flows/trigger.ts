@@ -106,7 +106,9 @@ export function normalizeFlowTrigger(value: unknown, fallback?: unknown): FlowTr
 
 /**
  * The builder stores the editable trigger on the graph's trigger node. Runtime
- * dispatchers read Flow.trigger, so every save/publish must sync this value.
+ * dispatchers read Flow.trigger, which holds the trigger of the graph that
+ * RUNS: synced from the draft only while nothing is published, and from the
+ * published graph at publish — see src/lib/flows/trigger-columns.ts.
  */
 export function triggerFromGraph(graph: FlowGraph, fallback?: unknown): FlowTrigger {
   const node = graph.nodes.find((candidate) => candidate.type === 'trigger')
@@ -133,6 +135,106 @@ export function preserveWebhookSecretHash(next: unknown, existing: unknown): Flo
     trigger.webhookSecretHash = existing.webhookSecretHash
   }
   return trigger
+}
+
+/** JSON with object keys sorted, so two triggers that differ only in key order compare equal. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value ?? null)
+}
+
+/**
+ * What a poll trigger's cursor is a cursor OF: the read it calls and how it
+ * picks out and keys items. The cursor's "seen" keys only mean anything for
+ * this exact read — point the poll at another tool, connection, query, list
+ * field or id field and every record it returns looks new. Null for any other
+ * trigger type. Cadence and emit mode are deliberately absent: they change when
+ * and how runs start, not which items count as seen.
+ */
+export function pollIdentity(trigger: unknown): string | null {
+  if (!isRecord(trigger) || trigger.type !== 'poll') return null
+  // args is stored as the editor's JSON text; parse it so whitespace or key
+  // order alone is not a "different query".
+  let args: unknown = trigger.args ?? null
+  if (typeof args === 'string') {
+    try {
+      args = args.trim() ? JSON.parse(args) : null
+    } catch {
+      // Unparseable text is compared as text — still an identity.
+    }
+  }
+  const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '')
+  return stableJson({
+    connectionId: text(trigger.connectionId),
+    toolName: text(trigger.toolName),
+    args: isRecord(args) && Object.keys(args).length === 0 ? null : args,
+    itemsPath: text(trigger.itemsPath),
+    // The dispatcher keys on 'id' when none is set (poll-dispatch.ts).
+    dedupeKey: text(trigger.dedupeKey) || 'id',
+  })
+}
+
+/**
+ * Whether the flow's stored poll cursor must be dropped when the trigger that
+ * FIRES goes from `previous` to `next`. Any change to the poll's identity —
+ * including switching away from a poll and back — means the cursor's seen keys
+ * describe some other read, and reusing them starts one run per pre-existing
+ * record. Dropping it makes the next poll a baseline again (emits nothing).
+ */
+export function pollIdentityChanged(previous: unknown, next: unknown): boolean {
+  return pollIdentity(previous) !== pollIdentity(next)
+}
+
+/** Plain-English name of a trigger type, for "the live flow still starts …" notices. */
+export function triggerTypeLabel(type: unknown): string {
+  switch (type) {
+    case 'schedule':
+      return 'on a schedule'
+    case 'poll':
+      return 'when new items appear in an app'
+    case 'webhook':
+      return 'when an HTTP request is received'
+    case 'form':
+      return 'when its hosted form is submitted'
+    case 'signal':
+      return 'on a workspace signal'
+    case 'slack':
+      return 'when someone posts in Slack'
+    case 'activity':
+      return 'when something happens in a connected app'
+    default:
+      return 'only when someone runs it'
+  }
+}
+
+/**
+ * How the draft's trigger differs from the one the published flow fires on —
+ * 'type' (a different kind of trigger), 'config' (same kind, different
+ * settings), or null. Server-held fields are ignored: the secret hash never
+ * reaches the client, and a schedule's anchor is bookkeeping, not a setting.
+ */
+export function triggerDraftDiff(live: unknown, draft: unknown): 'type' | 'config' | null {
+  const comparable = (value: unknown) => {
+    const trigger: Record<string, unknown> = { ...normalizeFlowTrigger(value) }
+    delete trigger.webhookSecretHash
+    if (isRecord(trigger.schedule)) {
+      const schedule = { ...trigger.schedule }
+      delete schedule.anchor
+      trigger.schedule = schedule
+    }
+    return trigger
+  }
+  const a = comparable(live)
+  const b = comparable(draft)
+  if (a.type !== b.type) return 'type'
+  return stableJson(a) === stableJson(b) ? null : 'config'
 }
 
 /**

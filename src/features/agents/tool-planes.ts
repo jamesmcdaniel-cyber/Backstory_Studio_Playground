@@ -56,7 +56,7 @@ import {
   toolPolicyFor,
   type McpToolAnnotations,
 } from '@/lib/mcp/tool-policy'
-import { WAREHOUSE_TOOLS, WarehouseToolClient, isWarehouseProvider, warehouseToolIsWrite } from '@/lib/warehouse/tools'
+import { WAREHOUSE_TOOLS, WarehouseToolClient, isWarehouseProvider, warehouseToolClassifiedPerCall, warehouseToolIsWrite } from '@/lib/warehouse/tools'
 import { listWarehouseCredentialHosts, missingWarehouseCredentialMessage, type WarehouseKind } from '@/lib/warehouse/credentials'
 
 // Minimal interface every plane's execution client satisfies (McpClient,
@@ -926,6 +926,34 @@ export type FlowToolExecutor = {
   needsApproval?: boolean
   /** Whose account the call goes out on — recorded by the action ledger. */
   credential?: PlaneCredential
+}
+
+/**
+ * Read vs write for a flow tool, decided WITHOUT resolving a credential — the
+ * answer resolveFlowToolExecutor's `isWrite` gives at run time, branch for
+ * branch, so the builder's poll picker and publish validation can refuse a
+ * write tool before the poller silently does. 'args' means classified per
+ * call (a warehouse SQL query reads for SELECT, writes for DELETE): decide
+ * with the call's args via warehouseToolIsWrite. Keep the two in step.
+ */
+export function flowToolWriteClass(plane: FlowToolPlane, ref: string, toolName: string): 'read' | 'write' | 'args' {
+  const of = (isWrite: boolean) => (isWrite ? 'write' : 'read')
+  if (plane === 'mcp' || plane === 'people_ai') return 'read'
+  if (plane === 'native') {
+    if (ref === 'research' || ref === 'granola' || ref === 'code') return 'read'
+    if (ref === 'data_tables') return of(dataTableToolIsWrite(toolName))
+    if (isWarehouseProvider(ref)) return warehouseToolClassifiedPerCall(toolName) ? 'args' : of(warehouseToolIsWrite(toolName))
+    if (ref === 'repository' || ref === 'roi' || ref === 'adapters' || ref === 'slack' || ref === 'email' || ref === 'http') {
+      const descriptor = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === ref)
+        ?? BUILTIN_CONNECTORS.find((c) => c.providerId === ref)
+      return of(descriptor?.isWrite ?? true)
+    }
+    // An unknown built-in fails to resolve at run time; never call it a read.
+    return 'write'
+  }
+  const providerTool = NANGO_PROVIDER_TOOLS.find((tool) => tool.name === ref)
+  // Delivery capabilities (send a Slack message, an email…) always write.
+  return providerTool ? of(providerTool.isWrite) : 'write'
 }
 
 /**

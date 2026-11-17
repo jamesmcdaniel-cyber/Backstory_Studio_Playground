@@ -62,6 +62,12 @@ export function warehouseToolIsWrite(toolName: string, args?: Record<string, unk
   return !DATABRICKS_READ_TOOLS.has(toolName)
 }
 
+/** True when the tool is read or write depending on the call's statement —
+ *  a catalog can only say "depends", the args decide (warehouseToolIsWrite). */
+export function warehouseToolClassifiedPerCall(toolName: string): boolean {
+  return SQL_TOOLS.has(toolName)
+}
+
 /** True when the name is any known warehouse tool (SQL or Databricks API). */
 export function isKnownWarehouseToolName(toolName: string): boolean {
   return SQL_TOOLS.has(toolName) || DATABRICKS_READ_TOOLS.has(toolName) || DATABRICKS_WRITE_TOOLS.has(toolName)

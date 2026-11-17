@@ -43,3 +43,15 @@ export function newPollItems(
   const merged = [...cursor.seen, ...currentKeys.filter((key) => !seen.has(key))]
   return { fresh, nextCursor: { seen: merged.slice(-MAX_SEEN) } }
 }
+
+/**
+ * The last poll's failure, when the most recent check failed — what the
+ * builder shows so a poll that never fires says why. Null once a check succeeds.
+ */
+export function pollFailure(pollCursor: unknown): { message: string; at: string } | null {
+  if (!pollCursor || typeof pollCursor !== 'object' || Array.isArray(pollCursor)) return null
+  const raw = (pollCursor as { lastError?: unknown }).lastError
+  if (!raw || typeof raw !== 'object') return null
+  const { message, at } = raw as { message?: unknown; at?: unknown }
+  return typeof message === 'string' && typeof at === 'string' ? { message, at } : null
+}

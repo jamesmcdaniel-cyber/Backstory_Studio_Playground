@@ -12,7 +12,8 @@ import { parseFlowSettings } from '@/lib/flows/settings'
 import { emptyGraph, flowGraphSchema } from '@/lib/flows/graph'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import { loadRunValidationContext } from '@/lib/flows/run-validation'
-import { activityMatchColumns, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
+import { activityMatchColumns, triggerFromGraph } from '@/lib/flows/trigger'
+import { draftGraphTriggerColumns } from '@/lib/flows/trigger-columns'
 import { assertFlowEditable } from '@/lib/flows/access'
 import { nativeNodeRegistry } from '@/lib/flows/node-registry'
 import { publishFlowDraft, unpublishFlowDraft } from '@/lib/flows/publish-service'
@@ -325,9 +326,10 @@ async function callManagementTool(
           return toolResult('The draft changed since expectedUpdatedAt; read it again before updating.', true)
         }
         const graph = parsed.graph === undefined ? undefined : flowGraphSchema.parse(parsed.graph)
-        const trigger = graph
-          ? preserveWebhookSecretHash(triggerFromGraph(graph, flow.trigger), flow.trigger)
-          : undefined
+        // Same trigger rules as the builder's save (trigger-columns.ts): kept
+        // secret hash, anchored schedule, poll cursor reset on a new read, and
+        // nothing at all for a published flow — publish_flow arms the trigger.
+        const triggerColumns = graph ? draftGraphTriggerColumns(graph, flow) : null
         const result = await prisma.flow.updateMany({
           where: {
             id: flow.id,
@@ -341,7 +343,7 @@ async function callManagementTool(
             ...(parsed.settings !== undefined ? { settings: jsonValue(parseFlowSettings(parsed.settings)) } : {}),
             ...(parsed.visibility !== undefined ? { visibility: parsed.visibility } : {}),
             ...(parsed.folder !== undefined ? { folder: parsed.folder } : {}),
-            ...(trigger ? { trigger: jsonValue(trigger), ...activityMatchColumns(trigger) } : {}),
+            ...(triggerColumns ?? {}),
           },
         })
         if (!result.count) return toolResult('The draft changed concurrently; read it again before updating.', true)
@@ -430,14 +432,15 @@ async function callManagementTool(
         if (!version) return toolResult(`Version ${parsed.version} does not exist.`, true)
         const graph = flowGraphSchema.parse(version.graph)
         const summary = summarizeGraphChange(flow.graph, graph)
-        const trigger = preserveWebhookSecretHash(triggerFromGraph(graph, flow.trigger), flow.trigger)
+        // A restore rewrites the DRAFT: a published flow's live trigger stays
+        // until it is published again (see trigger-columns.ts).
+        const triggerColumns = draftGraphTriggerColumns(graph, flow)
         const updated = await tenantTransaction(auth.organizationId, async (tx) => {
           const next = await tx.flow.update({
             where: { id: flow.id, organizationId: auth.organizationId },
             data: {
               graph: jsonValue(graph),
-              trigger: jsonValue(trigger),
-              ...activityMatchColumns(trigger),
+              ...(triggerColumns ?? {}),
             },
             select: { id: true, updatedAt: true },
           })

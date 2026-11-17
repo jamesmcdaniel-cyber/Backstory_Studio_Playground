@@ -60,7 +60,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     const secret = randomBytes(24).toString('base64url')
     const written = await prisma.flow.updateMany({
       where: { id: flow.id, organizationId: auth.organizationId, updatedAt: flow.updatedAt },
-      data: { trigger: { ...trigger, type: 'webhook', webhookSecretHash: hashToken(secret) } },
+      // A published flow's trigger column is its LIVE trigger (trigger-columns.ts):
+      // minting a secret for a draft that just switched to a webhook must not
+      // re-arm the running flow as one. The hash is stored either way, and
+      // publishing the webhook draft keeps it.
+      data: { trigger: { ...trigger, ...(flow.publishedGraph == null ? { type: 'webhook' } : {}), webhookSecretHash: hashToken(secret) } },
     })
     if (written.count === 1) {
       const updated = await prisma.flow.findFirst({ where: { id: flow.id, organizationId: auth.organizationId }, select: { updatedAt: true } })

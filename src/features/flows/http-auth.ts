@@ -11,6 +11,7 @@ import { assessStaleness } from '@/lib/credentials/lifetime'
 import { cannedFetchResponse, demoAmbientActive } from '@/lib/demo/transport'
 import { resolveHttpCredentialSecretReferences } from '@/lib/external-secrets/service'
 import { snowflakeKeyPairJwt } from '@/lib/warehouse/snowflake-jwt'
+import { credentialOwnerLabel, foreignHttpCredentialMessage, httpCredentialUsableBy } from '@/lib/credentials/http-credential-owner'
 
 export const HTTP_AUTH_TYPES = [
   'basic',
@@ -380,6 +381,14 @@ export interface HttpCredentialUseContext {
   actorUserId?: string | null
   executionId?: string | null
   consumer?: string
+  /**
+   * Set on the run paths that act as the runner (a flow HTTP step, an agent's
+   * HTTP tools): a personal credential then resolves only for its owner
+   * (`actorUserId`), a legacy unowned one for anyone. See
+   * lib/credentials/http-credential-owner. Left unset by the warehouse
+   * resolver, which keeps its own preference ladder.
+   */
+  runnerOwned?: boolean
 }
 
 export async function resolveHttpCredential(
@@ -394,6 +403,24 @@ export async function resolveHttpCredential(
     where: { id: credentialId, organizationId, status: { in: ['verified', 'error'] } },
   })
   if (!row) throw new Error('The selected HTTP credential is unavailable. Choose or verify it again.')
+  if (context?.runnerOwned && !httpCredentialUsableBy(row, context.actorUserId)) {
+    const owner = row.userId
+      ? await prisma.user.findFirst({ where: { id: row.userId, organizationId }, select: { name: true, email: true } }).catch(() => null)
+      : null
+    await recordCredentialUseFailure({
+      organizationId,
+      kind: 'http_credential',
+      credentialId: row.id,
+      provider: row.allowedHost,
+      actorUserId: context.actorUserId ?? null,
+      executionId: context.executionId ?? null,
+      ownerUserId: row.userId,
+      consumer: context.consumer ?? 'flow.http_step',
+      reason: 'not_owner',
+    })
+    const subject = context.consumer?.startsWith('agent.') ? 'This agent' : 'This step'
+    throw new Error(foreignHttpCredentialMessage(subject, credentialOwnerLabel(owner), row.allowedHost))
+  }
   let config: HttpCredentialConfig
   let externalFields: string[] = []
   let localConfig: HttpCredentialConfig

@@ -53,6 +53,15 @@ export function httpTools(endpoints: AgentHttpEndpoint[] = []): ToolDefinition[]
   ]
 }
 
+/**
+ * From a host's candidate credentials (already in the store's status/recency
+ * order), the runner's own first, then a legacy unowned one. Another member's
+ * personal credential is never picked.
+ */
+export function pickRunnerHttpCredential<T extends { userId: string | null }>(rows: T[], runnerUserId: string | null | undefined): T | null {
+  return (runnerUserId ? rows.find((row) => row.userId === runnerUserId) : undefined) ?? rows.find((row) => row.userId === null) ?? null
+}
+
 export class HttpToolClient {
   /**
    * Org scope for credential lookup. Omitted by callers with no org context
@@ -71,19 +80,31 @@ export class HttpToolClient {
    * The saved credential bound to this host, or null. Host-locked by the store:
    * a credential for api.example.com can never be attached to another host, so
    * a model calling an arbitrary URL cannot exfiltrate a workspace secret.
+   *
+   * Agents act as the person running them: the runner's own credential for
+   * the host first, then a legacy unowned one — never another member's
+   * personal credential (lib/credentials/http-credential-owner).
    */
   private async credentialForHost(host: string) {
     if (!this.organizationId) return null
     try {
-      const row = await prisma.httpCredential.findFirst({
-        where: { organizationId: this.organizationId, allowedHost: host, status: { in: ['verified', 'error'] } },
+      const rows = await prisma.httpCredential.findMany({
+        where: {
+          organizationId: this.organizationId,
+          allowedHost: host,
+          status: { in: ['verified', 'error'] },
+          OR: [{ userId: null }, ...(this.userId ? [{ userId: this.userId }] : [])],
+        },
         orderBy: [{ status: 'asc' }, { lastVerifiedAt: 'desc' }],
-        select: { id: true },
+        select: { id: true, userId: true },
+        take: 20,
       })
+      const row = pickRunnerHttpCredential(rows, this.userId)
       if (!row) return null
       return await resolveHttpCredential(row.id, this.organizationId, {
         actorUserId: this.userId ?? null,
         consumer: 'agent.http_tool_host_match',
+        runnerOwned: true,
       })
     } catch (error) {
       // A missing/undecryptable credential must not fail the call — the request
@@ -139,6 +160,7 @@ export class HttpToolClient {
       boundCredential = await resolveHttpCredential(endpoint.credentialId, this.organizationId, {
         actorUserId: this.userId ?? null,
         consumer: 'agent.http_endpoint',
+        runnerOwned: true,
       })
     } else if (endpoint.connectionId && this.organizationId) {
       boundCredential = await resolveHttpConnectionCredential({

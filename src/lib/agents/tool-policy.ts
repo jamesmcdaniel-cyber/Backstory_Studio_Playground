@@ -71,6 +71,28 @@ export function isWriteToolName(name: string): boolean {
   return WRITE_NAME_FRAGMENTS.some((fragment) => normalized.includes(fragment))
 }
 
+/**
+ * The write classification the runtime itself attached to a tool (its
+ * binding), as far as it can be known before the call.
+ *
+ * The name heuristic alone let real writes through a read-only step: the
+ * HTTP plane's `request`, Data Table inserts/upserts, a Sheets append row, a
+ * configured API endpoint — none of those names carries a write fragment, but
+ * every one of their bindings says it writes. MCP tools are classified by
+ * what the server reports (`reportsWrite`, from its annotations).
+ *
+ * A tool classified per CALL (`isWriteFor`: a warehouse query is a read for
+ * SELECT and a write for DELETE) is not a static write — it stays, and the
+ * runtime refuses its write calls under a read-only policy at execution.
+ */
+export type WriteClassification = { isWrite: boolean; isWriteFor?: unknown; reportsWrite?: boolean }
+
+export function bindingIsStaticWrite(binding: WriteClassification | undefined): boolean {
+  if (!binding) return false
+  if (binding.reportsWrite === true) return true
+  return binding.isWriteFor ? false : binding.isWrite
+}
+
 export interface PolicyDecision<T> {
   tools: T[]
   /** Names removed, for the run log — a silently shrunk tool set is a bug report. */
@@ -81,12 +103,17 @@ export interface PolicyDecision<T> {
  * Apply a step's policy to the tools resolved for the run.
  *
  * `nameOf` keeps this independent of the tool object shape, so it can be unit
- * tested without constructing a live tool set.
+ * tested without constructing a live tool set. `classificationOf` hands over
+ * the runtime's own write classification (the tool's binding): read-only
+ * withholds a tool when EITHER its name or its binding says it writes, so the
+ * builder's promise — nothing in this step can send or change data — holds
+ * for tools whose names give nothing away.
  */
 export function applyToolPolicy<T>(
   tools: T[],
   policy: ToolPolicy | undefined,
   nameOf: (tool: T) => string,
+  classificationOf?: (tool: T) => WriteClassification | undefined,
 ): PolicyDecision<T> {
   const mode = policy?.mode ?? 'inherit'
   if (mode === 'inherit') return { tools, removed: [] }
@@ -97,7 +124,7 @@ export function applyToolPolicy<T>(
 
   const keep = (tool: T): boolean => {
     const name = nameOf(tool)
-    if (mode === 'readonly') return !isWriteToolName(name)
+    if (mode === 'readonly') return !isWriteToolName(name) && !bindingIsStaticWrite(classificationOf?.(tool))
     // allowlist: exact match only. Prefix or fuzzy matching would let
     // `send_message` satisfy an allowlist entry of `send`, which is the
     // opposite of what an allowlist is for.

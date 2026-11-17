@@ -2,6 +2,8 @@ import { AI_OP_LABELS, FIELD_TYPES, type FlowGraph, type FlowNode } from '@/lib/
 import { DATA_OP_LABELS } from '@/lib/flows/data-ops'
 import { FLOW_TRIGGER_TYPES } from '@/lib/flows/trigger'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
+import { foreignHttpCredentialMessage } from '@/lib/credentials/http-credential-owner'
+import { normalizeStepAlias, stepLabelsOf } from '@/lib/flows/token-text'
 import { matchBrandHint, type ToolBrand } from '@/lib/flows/tool-presentation'
 import { buildAdjacency, findCycle } from '@/lib/flows/dag-scheduler'
 import { nodeVersionProblem } from '@/lib/flows/node-versions'
@@ -24,8 +26,12 @@ export type FlowValidationContext = {
     toolsError?: string
     blockedTools?: string[]
   }[]
-  /** Reusable HTTP credentials visible to the executing workspace. */
-  httpCredentials?: { id: string }[]
+  /**
+   * Reusable HTTP credentials visible to the executing workspace.
+   * `foreignOwner`: another member's personal credential, which this run may
+   * not act through.
+   */
+  httpCredentials?: { id: string; host?: string; foreignOwner?: string }[]
   /** Per-user runtime credential placeholders visible to the workspace. */
   credentialResolvers?: { id: string }[]
   /** Set by publish validation; omitted for draft/manual-run validation. */
@@ -632,8 +638,11 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       if (node.data.connectionId && context.toolCatalog && !connectionIds.has(node.data.connectionId)) {
         add(issues, 'error', 'UNKNOWN_HTTP_CONNECTION', `${nodeLabel(node)} authenticates with a connection that is not available — pick another connection or reconnect it in Integrations.`, node.id)
       }
+      const foreignCredential = node.data.credentialId ? context.httpCredentials?.find((credential) => credential.id === node.data.credentialId && credential.foreignOwner) : undefined
       if (node.data.credentialId && context.httpCredentials && !httpCredentialIds.has(node.data.credentialId)) {
         add(issues, 'error', 'UNKNOWN_HTTP_CREDENTIAL', `${nodeLabel(node)} uses an HTTP credential that is not available — choose or create another credential.`, node.id)
+      } else if (foreignCredential) {
+        add(issues, 'error', 'HTTP_CREDENTIAL_NOT_OWNED', foreignHttpCredentialMessage(nodeLabel(node), foreignCredential.foreignOwner!, foreignCredential.host ?? 'this host'), node.id)
       }
       if (node.data.credentialResolverId && context.credentialResolvers && !credentialResolverIds.has(node.data.credentialResolverId)) {
         add(issues, 'error', 'UNKNOWN_CREDENTIAL_RESOLVER', `${nodeLabel(node)} uses a per-user credential resolver that is not available — choose another resolver.`, node.id)
@@ -697,7 +706,8 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
     // Error Shield: a step set to route failures needs a labeled 'error' edge to
     // route them down. Without one the failure just continues on the normal path
     // (never a crash) — a nudge, not a blocker.
-    if ((node.type === 'agent' || node.type === 'tool' || node.type === 'http' || node.type === 'code') && node.data.onError === 'route') {
+    // ai and subflow steps route on error at run time too (interpret.ts).
+    if ((node.type === 'agent' || node.type === 'tool' || node.type === 'http' || node.type === 'code' || node.type === 'ai' || node.type === 'subflow') && node.data.onError === 'route') {
       if (!graph.edges.some((edge) => edge.source === node.id && edge.branch === 'error')) {
         add(issues, 'warning', 'ROUTE_NO_ERROR_PATH', `${nodeLabel(node)} routes on error but has no error path — failures continue on the normal path.`, node.id)
       }
@@ -1021,13 +1031,30 @@ export function validateFlowGraph(graph: FlowGraph, context: FlowValidationConte
       .map((node) => node.data.name.trim())
       .filter(Boolean),
   )
+  // The runtime resolves `{{step.<Label>…}}` as well as `{{step.<id>…}}`
+  // (resolveContextPath → readStepByAlias): a label, normalized the same way,
+  // matched on the longest leading run of path segments (labels may contain
+  // dots). Rejecting what the run would resolve made a working token an error.
+  const labelAliases = new Set(
+    Object.values(stepLabelsOf(graph, (context.agents ?? []).map((agent) => ({ id: agent.id, title: agent.title ?? '' }))))
+      .map(normalizeStepAlias)
+      .filter(Boolean),
+  )
+  const namesStep = (path: string) => {
+    const parts = path.split('.')
+    if (byId.has(parts[0].trim())) return true
+    for (let end = parts.length; end >= 1; end--) {
+      if (labelAliases.has(normalizeStepAlias(parts.slice(0, end).join('.')))) return true
+    }
+    return false
+  }
   for (const node of graph.nodes) {
     if (node.type === 'trigger' || node.type === 'note') continue
     const dataStr = JSON.stringify(node.data)
     // Ids and names may contain spaces (the importer derives ids from n8n node
-    // names) — capture up to the next `.` or closing brace, then trim.
-    for (const match of dataStr.matchAll(/\{\{\s*step\.([^.}]+)/g)) {
-      if (!byId.has(match[1].trim())) {
+    // names) — capture the whole path up to the closing brace, then trim.
+    for (const match of dataStr.matchAll(/\{\{\s*step\.([^}]*)/g)) {
+      if (!namesStep(match[1].trim())) {
         add(issues, 'error', 'TOKEN_UNKNOWN_STEP', `${nodeLabel(node)} uses data from a step that no longer exists — open its settings and re-pick the value from the data menu.`, node.id)
         break
       }

@@ -379,7 +379,7 @@ export async function selectDiscoveredTools(
 ): Promise<{ tools: ToolDefinition[]; bindings: Map<string, ToolBinding> }> {
   // Narrow BEFORE budgeting. Otherwise disallowed tools consume the cap and
   // crowd out the exact read tools an allowlisted task needs.
-  discovered = applyToolPolicy(discovered, policy, tool => tool.name).tools
+  discovered = applyToolPolicy(discovered, policy, tool => tool.name, tool => tool.binding).tools
   const seen = new Set<string>()
   const unique = discovered.filter((d) => (seen.has(d.name) ? false : (seen.add(d.name), true)))
 
@@ -429,6 +429,7 @@ export async function loadTools(
   artifact?: ArtifactRunContext,
   policy?: ToolPolicy,
   executionId?: string,
+  grantedConnectionIds: readonly string[] = [],
 ) {
   // Every plane contributes to one list; the cap/priority policy is applied once
   // at the end (capDiscoveredTools) so write tools aren't crowded out. Plane
@@ -499,7 +500,7 @@ export async function loadTools(
   // reads the very same functions, which is what keeps "what this agent can
   // do" honest. A conversation about an artifact runs with the producing
   // agent's whole toolset plus the artifact's own tools.
-  const groups = await loadAgentToolGroups({ organizationId, providers, ownerUserId, httpEndpoints, agentId, artifact, executionId })
+  const groups = await loadAgentToolGroups({ organizationId, providers, ownerUserId, httpEndpoints, agentId, artifact, executionId, grantedConnectionIds })
   const fromGroups = discoveredToolsFromGroups(groups, toolSettings)
   discovered.push(...fromGroups.discovered)
   // Planes that produced no usable client. Kept so the run can report WHICH
@@ -510,7 +511,7 @@ export async function loadTools(
   // Select which tools to expose: over the cap, rank by relevance to the
   // objective (best-effort, embeddings-gated) with a reserved write budget;
   // otherwise the deterministic cap. Delivery tools aren't crowded out either way.
-  const policyRemoved = applyToolPolicy(discovered, policy, tool => tool.name).removed
+  const policyRemoved = applyToolPolicy(discovered, policy, tool => tool.name, tool => tool.binding).removed
   const selected = await selectDiscoveredTools(discovered, organizationId, query, policy)
   if (unavailable.length) {
     apiLogger.warn('loadTools: attached integrations produced no usable tools', {
@@ -1002,21 +1003,14 @@ async function runAgentExecutionInner(
 
     // Typed connector bindings gate tool loading; falls back to
     // metadata.integrations for agents created before the FK existed.
-    // A flow step may grant EXTRA tool connections for this run: native/nango
-    // catalog ids contribute their provider key (mcp/people_ai connections
-    // already load for every run).
+    // A flow step (or an artifact assistant's toggles) may grant EXTRA tool
+    // connections for this run; each loads exactly its own plane — see
+    // stepGrantSelection (mcp/people_ai connections already load for every run).
     // Publishing pins the tools too: adding a write-capable integration to a
     // published agent must not change what it can do to the world with nothing
     // republished.
     // Resolved by agentToolConfig — the same call the scope card makes.
     const { providers, toolSettings, httpEndpoints } = await agentToolConfig(agent, agentMetadata)
-    for (const connectionId of data.stepOverrides?.toolConnectionIds ?? []) {
-      const sep = connectionId.indexOf(':')
-      if (sep <= 0) continue
-      const plane = connectionId.slice(0, sep)
-      const ref = connectionId.slice(sep + 1)
-      if ((plane === 'native' || plane === 'nango') && ref && !providers.includes(ref)) providers.push(ref)
-    }
     const skillIds = Array.isArray(agentMetadata.skills) ? agentMetadata.skills.map(String) : []
     // Configured API endpoints (agent setup → HTTP API) become named tools.
     // Per-tool scopes (agent setup → chip gear): resource scopes (channels,
@@ -1034,7 +1028,7 @@ async function runAgentExecutionInner(
     // Artifact prompts contain extensive source/instructions. Rank against the
     // actual latest request first, not the first 2 KB of that boilerplate.
     const toolQuery = artifactContext?.toolQuery || artifactContext?.request || [data.input, agent.objective].filter(Boolean).join('\n')
-    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext, policy, execution.id)
+    const loaded = await loadTools(organizationId, providers, userId, toolQuery, httpEndpoints, toolSettings, agent.id, artifactContext, policy, execution.id, data.stepOverrides?.toolConnectionIds ?? [])
     const { bindings, unavailable } = loaded
 
     // Applied AFTER the agent's own tools and any step-granted connections, so
@@ -1042,7 +1036,7 @@ async function runAgentExecutionInner(
     // cannot escalate through it. Least privilege is the control that still
     // holds when the model is talked into something, which is why this exists
     // alongside the untrusted-data fencing rather than instead of it.
-    const policed = applyToolPolicy(loaded.tools, policy, (tool) => tool.name)
+    const policed = applyToolPolicy(loaded.tools, policy, (tool) => tool.name, (tool) => bindings.get(tool.name))
     const tools = policed.tools
     const policyNote = describeToolPolicy({ tools, removed: [...loaded.policyRemoved, ...policed.removed] }, policy?.mode ?? 'inherit')
     if (policyNote) {

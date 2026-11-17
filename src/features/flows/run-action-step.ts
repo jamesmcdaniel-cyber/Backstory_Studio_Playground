@@ -783,6 +783,10 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
             actorUserId: job.userId,
             executionId: run.id,
             consumer: 'flow.http_step',
+            // The runner's own credential, or a legacy unowned one — never
+            // another member's personal key (scheduled/webhook/poll runs act
+            // as the flow's owner, whose own credential keeps working).
+            runnerOwned: true,
           })
         } else if (credentialResolverId) {
           httpCredential = await resolveCredentialResolver(

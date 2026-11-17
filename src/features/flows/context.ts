@@ -1,6 +1,7 @@
 import type { ConditionOp } from '@/lib/flows/graph'
 import { fenceUntrusted } from '@/lib/security/prompt'
 import type { FlowItem } from '@/lib/flows/items'
+import { normalizeStepAlias } from '@/lib/flows/token-text'
 
 /**
  * The evaluation context threaded through a flow run: the trigger input, every
@@ -144,10 +145,8 @@ export function buildUpstreamContextBlock(
   )
 }
 
-/** Normalize a step label for alias lookup: trimmed, lowercased, single-spaced. */
-export function normalizeStepAlias(label: string): string {
-  return label.trim().toLowerCase().replace(/\s+/g, ' ')
-}
+/** Normalize a step label for alias lookup (lives with the token helpers, shared with the validator). */
+export { normalizeStepAlias }
 
 // Reading a text-ish field name off a PLAIN-TEXT output means the text itself:
 // an agent step's output is a string, so `step.x.output.message` (or `.text`,

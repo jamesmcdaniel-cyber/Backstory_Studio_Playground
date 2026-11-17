@@ -38,6 +38,7 @@ export const FIELD_BY_CODE: Record<string, string> = {
   INVALID_HTTP_AUTH_CONNECTION: 'httpAuth',
   UNKNOWN_HTTP_CONNECTION: 'httpAuth',
   UNKNOWN_HTTP_CREDENTIAL: 'httpAuth',
+  HTTP_CREDENTIAL_NOT_OWNED: 'httpAuth',
   UNKNOWN_CREDENTIAL_RESOLVER: 'httpAuth',
   HTTP_BODY_IGNORED: 'httpBody',
   FILE_FIELD_BODY_OFF: 'httpBody',

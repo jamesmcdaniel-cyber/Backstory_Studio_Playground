@@ -248,7 +248,10 @@ const BY_TYPE: Partial<Record<FlowNode['type'], NodeOption[]>> = {
   ai: [...RUN_BEHAVIOUR, PER_ITEM_OPTION],
   tool: [...RUN_BEHAVIOUR, PER_ITEM_OPTION],
   subflow: [...RUN_BEHAVIOUR, SUBFLOW_OPTION, PER_ITEM_OPTION],
-  knowledge: [...RUN_BEHAVIOUR, PER_ITEM_OPTION],
+  // Retrieval is best-effort (an empty hit list, never a failure), and the
+  // knowledge schema stores none of the run-behaviour fields — offering them
+  // would be dead controls.
+  knowledge: [PER_ITEM_OPTION],
   data: [PER_ITEM_OPTION],
   transform: [...SET_OPTIONS, PER_ITEM_OPTION],
   // The code node stores neither alwaysOutputData nor retries, and the

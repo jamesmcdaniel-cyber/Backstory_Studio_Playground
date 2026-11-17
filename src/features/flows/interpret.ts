@@ -5,7 +5,7 @@ import { resolveTemplate, resolveTemplateValue, readPath, asStructured, evalCond
 import type { ToolPolicy } from '@/lib/agents/tool-policy'
 import { stepLabelsOf } from '@/lib/flows/token-text'
 import { buildAdjacency, edgeActivationsFor, type EdgeState, type EdgeResult, type NodeRunState } from '@/lib/flows/dag-scheduler'
-import { shouldRetryAfterTimeout } from './action-reliability'
+import { RETRY_MAX_DELAY_MS, retryBackoffMs, shouldRetryAfterTimeout } from './action-reliability'
 import { truncateError } from '@/lib/flows/truncate'
 import { structuredResponseInstruction, parseStructuredAgentOutput } from './agent-response'
 import { runDataOp, chunkItems, coerceFieldType, LIST_ENVELOPE_KEYS } from '@/lib/flows/data-ops'
@@ -518,7 +518,16 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
     // (action-reliability.ts) so both retry helpers leave the same shape of
     // proof behind: a retry that eventually succeeds is otherwise invisible.
     const attemptErrors: string[] = []
+    // "Wait Between Tries" — the same backoff tool/http steps use
+    // (runWithRetries) from the author's base; without one, the agent's own
+    // historical 250ms·2ⁿ schedule. `attempt` is already the NEXT attempt here.
+    const retryDelayMs = node.data.retryDelayMs
     let attempt = 0
+    const waitBeforeRetry = () => sleep(
+      retryDelayMs !== undefined
+        ? Math.min(retryBackoffMs(attempt - 1, retryDelayMs), RETRY_MAX_DELAY_MS)
+        : Math.min(8000, 250 * 2 ** attempt),
+    )
     for (;;) {
       const call = opts.runAgent({ id: stepKey, agentId: node.data.agentId, input: resolvedInput, resume, ...(overrides ? { overrides } : {}) })
       const raced = timeoutMs ? await raceTimeout(call, timeoutMs) : await call
@@ -533,7 +542,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
         attemptErrors.push(`attempt ${attempt + 1}/${max} failed: ${truncateError(error)}`)
         if (!canRetry) return { error, attempts: attemptErrors.length, attemptErrors }
         attempt += 1
-        await sleep(Math.min(8000, 250 * 2 ** attempt))
+        await waitBeforeRetry()
         continue
       }
       const res = raced
@@ -542,7 +551,7 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       attemptErrors.push(`attempt ${attempt + 1}/${max} failed: ${truncateError(res.error)}`)
       if (attempt >= retries) return { ...res, attempts: attemptErrors.length, attemptErrors }
       attempt += 1
-      await sleep(Math.min(8000, 250 * 2 ** attempt))
+      await waitBeforeRetry()
     }
   }
 
@@ -1141,7 +1150,10 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
               toolName: node.data.toolName,
               args: resolvedArgs,
               retries: node.data.retries,
+              ...(node.data.retryDelayMs !== undefined ? { retryDelayMs: node.data.retryDelayMs } : {}),
               timeoutMs: node.data.timeoutMs,
+              // Read by execute-flow's runAction (applyAlwaysOutputData).
+              ...(node.data.alwaysOutputData !== undefined ? { alwaysOutputData: node.data.alwaysOutputData } : {}),
             }
           : {
               ...(node.data.credentialId ? { credentialId: node.data.credentialId } : {}),
@@ -1169,7 +1181,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
               ...(node.data.maxRedirects !== undefined ? { maxRedirects: node.data.maxRedirects } : {}),
               failOnHttpError: node.data.failOnHttpError,
               retries: node.data.retries,
+              ...(node.data.retryDelayMs !== undefined ? { retryDelayMs: node.data.retryDelayMs } : {}),
               timeoutMs: node.data.timeoutMs,
+              ...(node.data.alwaysOutputData !== undefined ? { alwaysOutputData: node.data.alwaysOutputData } : {}),
               // Statics passed through unresolved — the adapter runs the
               // pagination loop and AI-optimize post-process.
               ...(node.data.pagination ? { pagination: node.data.pagination } : {}),
@@ -1393,6 +1407,9 @@ export async function interpretFlow(graph: FlowGraph, input: unknown, opts: Opts
       } else {
         output = asStructured(res.output)
       }
+      // "Always Output Data": an agent that answered with nothing still hands
+      // the steps below an (empty) result, as tool/http/ai/subflow steps do.
+      if (node.data.alwaysOutputData === true && (output === undefined || output === null || output === '')) output = {}
       ctx.step[node.id] = { output }
       emit({ nodeId: node.id, status: 'succeeded', output, ...(agentWarnings ? { warnings: agentWarnings } : {}) })
       return { kind: 'ok', output }

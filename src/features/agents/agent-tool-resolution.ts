@@ -153,7 +153,11 @@ export async function loadAgentToolGroups(params: {
 }): Promise<ToolPlaneGroup[]> {
   const { organizationId, providers, ownerUserId, artifact } = params
   const grants = stepGrantSelection(params.grantedConnectionIds)
-  const nativeProviders = [...providers, ...grants.nativeSelectors, 'repository', 'code', ...(artifact?.kind === 'roi_dashboard' ? ['roi'] : [])]
+  const nativeProviders = [
+    ...(artifact?.kind === 'roi_dashboard' ? [...providers, 'repository', 'code', 'roi'] : [...providers, 'repository', 'code']),
+    // Granted built-ins select their own plane only (the native loader).
+    ...grants.nativeSelectors,
+  ]
   const [peopleAiGroup, mcpGroups, nativeGroups, nangoGroups, grantedNangoGroups] = await Promise.all([
     loadPeopleAiPlaneGroup(organizationId, ownerUserId),
     loadMcpConnectionPlaneGroups(organizationId, ownerUserId),

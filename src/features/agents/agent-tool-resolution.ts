@@ -202,7 +202,7 @@ export function toolBindingFor(group: ToolPlaneGroup, tool: PlaneToolDescriptor)
     provider: group.provider,
     serverUrl: group.serverUrl,
     toolName: tool.name,
-    isWrite: group.isWrite,
+    isWrite: tool.isWrite ?? group.isWrite,
     ...(group.isWriteFor ? { isWriteFor: (args: Record<string, unknown>) => group.isWriteFor!(tool.name, args) } : {}),
     client: group.client!,
     ...(group.plane === 'mcp' ? { mcpConnectionId: group.id } : {}),

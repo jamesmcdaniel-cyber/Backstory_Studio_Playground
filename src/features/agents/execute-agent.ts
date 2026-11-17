@@ -379,7 +379,7 @@ export async function selectDiscoveredTools(
 ): Promise<{ tools: ToolDefinition[]; bindings: Map<string, ToolBinding> }> {
   // Narrow BEFORE budgeting. Otherwise disallowed tools consume the cap and
   // crowd out the exact read tools an allowlisted task needs.
-  discovered = applyToolPolicy(discovered, policy, tool => tool.name).tools
+  discovered = applyToolPolicy(discovered, policy, tool => tool.name, tool => tool.binding).tools
   const seen = new Set<string>()
   const unique = discovered.filter((d) => (seen.has(d.name) ? false : (seen.add(d.name), true)))
 
@@ -511,7 +511,7 @@ export async function loadTools(
   // Select which tools to expose: over the cap, rank by relevance to the
   // objective (best-effort, embeddings-gated) with a reserved write budget;
   // otherwise the deterministic cap. Delivery tools aren't crowded out either way.
-  const policyRemoved = applyToolPolicy(discovered, policy, tool => tool.name).removed
+  const policyRemoved = applyToolPolicy(discovered, policy, tool => tool.name, tool => tool.binding).removed
   const selected = await selectDiscoveredTools(discovered, organizationId, query, policy)
   if (unavailable.length) {
     apiLogger.warn('loadTools: attached integrations produced no usable tools', {
@@ -1016,7 +1016,7 @@ async function runAgentExecutionInner(
     // cannot escalate through it. Least privilege is the control that still
     // holds when the model is talked into something, which is why this exists
     // alongside the untrusted-data fencing rather than instead of it.
-    const policed = applyToolPolicy(loaded.tools, policy, (tool) => tool.name)
+    const policed = applyToolPolicy(loaded.tools, policy, (tool) => tool.name, (tool) => bindings.get(tool.name))
     const tools = policed.tools
     const policyNote = describeToolPolicy({ tools, removed: [...loaded.policyRemoved, ...policed.removed] }, policy?.mode ?? 'inherit')
     if (policyNote) {

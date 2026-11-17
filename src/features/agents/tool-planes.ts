@@ -122,6 +122,9 @@ export type PlaneToolDescriptor = {
   annotations?: McpToolAnnotations
   /** MCP only: the per-tool permission set in Integrations; absent = allowed. */
   policy?: 'approve' | 'off'
+  /** Per-tool write classification where a plane mixes reads and writes
+   *  (Data Tables); overrides the group's `isWrite` for this tool. */
+  isWrite?: boolean
 }
 
 /**
@@ -502,7 +505,7 @@ export async function loadNativePlaneGroups(
     descriptor: ConnectorDescriptor,
     serverUrl: string,
     client: McpToolClient,
-    defs: { name: string; description: string; inputSchema: Record<string, unknown> }[],
+    defs: { name: string; description: string; inputSchema: Record<string, unknown>; isWrite?: boolean }[],
   ): ToolPlaneGroup => ({
     id: formatFlowToolConnectionId('native', descriptor.providerId),
     plane: 'native',
@@ -511,7 +514,7 @@ export async function loadNativePlaneGroups(
     serverUrl,
     isWrite: descriptor.isWrite,
     client,
-    tools: defs.map((def) => ({ name: def.name, description: def.description, inputSchema: def.inputSchema })),
+    tools: defs.map((def) => ({ name: def.name, description: def.description, inputSchema: def.inputSchema, ...(def.isWrite !== undefined ? { isWrite: def.isWrite } : {}) })),
     credential: { actsAs: NATIVE_INTERNAL.has(descriptor.providerId) ? 'none' : 'workspace' },
   })
 
@@ -576,7 +579,9 @@ export async function loadNativePlaneGroups(
       dataTablesConn,
       'backstory://data-tables',
       new DataTableToolClient(organizationId, options.httpUserId),
-      DATA_TABLE_TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+      // Each tool carries its own classification: list/query rows are reads
+      // (no approval gate, allowed on a read-only step), the rest write.
+      DATA_TABLE_TOOLS.map(({ name, description, inputSchema, isWrite }) => ({ name, description, inputSchema, isWrite })),
     ))
   }
 

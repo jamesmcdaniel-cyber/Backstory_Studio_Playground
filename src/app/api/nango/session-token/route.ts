@@ -9,6 +9,13 @@ export const runtime = 'nodejs'
 // Creates a Nango Connect session token for the signed-in user. The frontend
 // passes the token to the Connect UI, which runs the OAuth flow end to end.
 // Sessions are tagged with the organization id so connections stay org-scoped.
+//
+// Any member who may run flows may connect THEIR OWN account: the session is
+// minted for `end_user = the caller`, so the resulting connection is personal
+// (agents act as the person who connected them). Requiring integration.manage
+// here refused every non-admin with "You do not have permission to do that."
+// before the Connect UI could open — the only thing an admin gate protects is other
+// people's connections, and disconnecting those stays admin-only.
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const { integrationId } = z
     .object({ integrationId: z.string().min(1).optional() })
@@ -42,4 +49,4 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   } catch (error) {
     throw nangoApiError(error)
   }
-}, { permission: 'integration.manage' })
+}, { permission: 'flow.run' })

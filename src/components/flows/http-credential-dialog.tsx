@@ -27,7 +27,7 @@ export type HttpSecretReference = {
 
 export const HTTP_AUTH_OPTIONS = [
   { value: 'basic', label: 'Basic Auth', description: 'Username and password' },
-  { value: 'bearer', label: 'Bearer Auth', description: 'Bearer access token' },
+  { value: 'bearer', label: 'Bearer Auth', description: 'Bearer access token or JWT' },
   { value: 'custom', label: 'Custom Auth', description: 'Custom JSON headers and query values' },
   { value: 'digest', label: 'Digest Auth', description: 'HTTP Digest username and password' },
   { value: 'header', label: 'Header Auth', description: 'A secret value in a named header' },
@@ -61,6 +61,8 @@ export type HttpCredentialSummary = {
   userId?: string | null
   /** No owner — a legacy workspace-shared credential, flagged for migration. */
   isSharedLegacy?: boolean
+  /** The caller may re-verify, rotate or delete this row (owner or admin). */
+  canManage?: boolean
   externalFields?: string[]
   secretRefs?: Record<string, HttpSecretReference>
 }

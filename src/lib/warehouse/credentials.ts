@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { WAREHOUSE_HOST_SUFFIXES, WAREHOUSE_LABEL, warehouseKindForHost, type WarehouseKind } from '@/lib/warehouse/hosts'
 import { resolveHttpCredential, type HttpCredentialUseContext, type ResolvedHttpCredential } from '@/features/flows/http-auth'
 
 /**
@@ -16,17 +17,10 @@ import { resolveHttpCredential, type HttpCredentialUseContext, type ResolvedHttp
  * preferred over yours.
  */
 
-export type WarehouseKind = 'databricks' | 'snowflake'
+export type { WarehouseKind } from '@/lib/warehouse/hosts'
+export { WAREHOUSE_HOST_SUFFIXES, WAREHOUSE_LABEL, warehouseKindForHost } from '@/lib/warehouse/hosts'
 
 export class WarehouseCredentialError extends Error {}
-
-/** Host suffixes that identify each warehouse. Lowercase, leading dot. */
-export const WAREHOUSE_HOST_SUFFIXES: Record<WarehouseKind, readonly string[]> = {
-  databricks: ['.cloud.databricks.com', '.azuredatabricks.net', '.gcp.databricks.com', '.databricks.us'],
-  snowflake: ['.snowflakecomputing.com'],
-}
-
-export const WAREHOUSE_LABEL: Record<WarehouseKind, string> = { databricks: 'Databricks', snowflake: 'Snowflake' }
 
 const EXAMPLE_HOST: Record<WarehouseKind, string> = {
   databricks: 'dbc-a1b2c3d4-e5f6.cloud.databricks.com',
@@ -36,14 +30,6 @@ const EXAMPLE_HOST: Record<WarehouseKind, string> = {
 const CREDENTIAL_HINT: Record<WarehouseKind, string> = {
   databricks: 'a Databricks personal access token as a bearer credential, or OAuth client credentials',
   snowflake: 'a Snowflake programmatic access token, a key pair, or an OAuth token',
-}
-
-export function warehouseKindForHost(host: string): WarehouseKind | null {
-  const lowered = host.toLowerCase()
-  for (const kind of Object.keys(WAREHOUSE_HOST_SUFFIXES) as WarehouseKind[]) {
-    if (WAREHOUSE_HOST_SUFFIXES[kind].some((suffix) => lowered.endsWith(suffix))) return kind
-  }
-  return null
 }
 
 /** The plain-English sentence every "no credential" failure ends with. */

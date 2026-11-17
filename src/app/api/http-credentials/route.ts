@@ -142,6 +142,11 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
       // unowned credential is one no offboarding can revoke.
       userId: row.userId,
       isSharedLegacy: row.userId === null,
+      // Whether THIS caller may re-verify, rotate or delete the row — the same
+      // rule PATCH/POST/DELETE enforce (owner, or an integration admin). The
+      // page reads it instead of comparing ids, because the browser holds the
+      // auth id and rows are owned by the database user id.
+      canManage: row.userId === auth.dbUser.id || auth.can('integration.manage'),
       externalFields: row.secretReferences.map((ref) => ref.field),
       externalProviderIds: [...new Set(row.secretReferences.map((ref) => ref.providerId))],
       ...(auth.can('integration.manage') ? {

@@ -13,6 +13,8 @@ import { PROVIDER_CONNECT_HINTS } from '@/components/integrations/provider-conne
 import { IntegrationDetailDialog } from '@/components/integrations/integration-detail-dialog'
 import { useCachedJson } from '@/lib/client/use-cached-json'
 import { useNangoConnect } from '@/lib/client/use-nango-connect'
+import { ApiCredentialDialog } from '@/components/integrations/api-credential-dialog'
+import { warehouseKindForHost, warehouseKindForProvider, type WarehouseKind } from '@/lib/warehouse/hosts'
 
 /** Integration cards per page — mirrors the Templates library grid. */
 const PAGE_SIZE = 9
@@ -115,7 +117,37 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
 
   // The connect/verify/disconnect round-trip is shared with the in-context
   // connect dialog templates open (see use-nango-connect).
-  const { busy, verifying, connect, verify, disconnect } = useNangoConnect(refreshAll)
+  const { busy, verifying, connect: connectViaNango, verify, disconnect } = useNangoConnect(refreshAll)
+
+  // Snowflake and Databricks appear in Nango's catalog, but a Nango connection
+  // to either reaches none of the warehouse tools: those run on a saved
+  // credential bound to the warehouse host (src/lib/warehouse/credentials.ts).
+  // Their cards open the credential form instead, and read "connected" from
+  // the credentials this person can use.
+  const { data: credentialData, refresh: refreshCredentials } =
+    useCachedJson<{ credentials?: { allowedHost: string; status: string }[] }>('/api/http-credentials?scope=bindable')
+  const warehousesConnected = useMemo(() => {
+    const connected = new Set<WarehouseKind>()
+    for (const row of credentialData?.credentials ?? []) {
+      const kind = warehouseKindForHost(row.allowedHost)
+      if (kind && row.status === 'verified') connected.add(kind)
+    }
+    return connected
+  }, [credentialData])
+  const [warehouseForm, setWarehouseForm] = useState<WarehouseKind | null>(null)
+  const warehouseOf = (integration: Integration) =>
+    warehouseKindForProvider(integration.provider) ?? warehouseKindForProvider(integration.name)
+  const connect = useCallback(
+    (integration: Integration) => {
+      const warehouse = warehouseKindForProvider(integration.provider) ?? warehouseKindForProvider(integration.name)
+      if (warehouse) {
+        setWarehouseForm(warehouse)
+        return
+      }
+      void connectViaNango({ id: integration.id, name: integration.name })
+    },
+    [connectViaNango],
+  )
 
   // Deep link: /integrations?connect=slack opens that provider's flow straight
   // away, so the "link your Slack" prompt in a Slack thread lands somewhere
@@ -131,7 +163,7 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
     )
     if (!match) return
     autoConnectFired.current = true
-    void connect({ id: match.id, name: match.name })
+    connect(match)
   }, [autoConnect, integrations, connect])
 
   // Plain substring search over the catalog — name and provider slug, filtered
@@ -214,7 +246,12 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
 
       <div className="stagger-children grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {pageItems.map((integration) => {
-          const connection = connections[integration.id]
+          const warehouse = warehouseOf(integration)
+          const connection: Connection | undefined = warehouse
+            ? warehousesConnected.has(warehouse)
+              ? { connected: true, connectionIds: [], provider: integration.provider, verifiedAt: 'credential' }
+              : undefined
+            : connections[integration.id]
           return (
             <Card
               key={integration.id}
@@ -249,15 +286,17 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="line-clamp-2 min-h-10 text-sm text-gray-500">
-                  Connect your {integration.name} account so agents can act on your behalf.
-                  {integration.toolCount
+                  {warehouse
+                    ? `Save a ${integration.name} login so agents and flows can query it as you.`
+                    : `Connect your ${integration.name} account so agents can act on your behalf.`}
+                  {!warehouse && integration.toolCount
                     ? ` ${integration.toolCount} agent tool${integration.toolCount === 1 ? '' : 's'} available.`
                     : ''}
                 </p>
                 {!connection?.connected && PROVIDER_CONNECT_HINTS[integration.provider] && (
                   <p className="text-xs text-gray-500">{PROVIDER_CONNECT_HINTS[integration.provider]}</p>
                 )}
-                {connection?.connected && integration.toolCount === 0 && (
+                {!warehouse && connection?.connected && integration.toolCount === 0 && (
                   <p className="text-xs text-amber-700">
                     Connected, but no agent tools resolve for this app — check its unique key in the Nango dashboard,
                     or its tools haven’t shipped yet.
@@ -267,7 +306,11 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
                     disconnected card already says "Not connected", and its
                     stale auth error would just shout at the Connect button. */}
                 {connection?.connected && connection.error && <p className="text-sm text-red-600">{connection.error}</p>}
-                {connection?.connected
+                {warehouse && connection?.connected
+                  ? <Button asChild className="w-full" variant="outline" onClick={(event) => event.stopPropagation()}>
+                      <a href="/credentials">Manage credentials</a>
+                    </Button>
+                  : connection?.connected
                   ? <div className="grid grid-cols-2 gap-2">
                       <Button
                         className="w-full"
@@ -280,7 +323,7 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
                       </Button>
                       <Button className="w-full" variant="outline" onClick={(event) => { event.stopPropagation(); disconnect(integration) }} loading={busy === integration.id}>Disconnect</Button>
                     </div>
-                  : <Button className="w-full" onClick={(event) => { event.stopPropagation(); connect(integration) }} loading={busy === integration.id}>
+                  : <Button className="w-full" onClick={(event) => { event.stopPropagation(); connect(integration) }} loading={!warehouse && busy === integration.id}>
                       Connect
                     </Button>}
               </CardContent>
@@ -291,10 +334,21 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
 
       <Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} />
 
+      <ApiCredentialDialog
+        open={Boolean(warehouseForm)}
+        onOpenChange={(next) => !next && setWarehouseForm(null)}
+        initialKind={warehouseForm ?? undefined}
+        lockKind
+        onSaved={() => void refreshCredentials()}
+      />
+
       {detailId && (() => {
         const integration = integrations.find((candidate) => candidate.id === detailId)
         if (!integration) return null
-        const connection = connections[integration.id]
+        const warehouse = warehouseOf(integration)
+        const connection = warehouse
+          ? { connected: warehousesConnected.has(warehouse), verifiedAt: warehousesConnected.has(warehouse) ? 'credential' : undefined }
+          : connections[integration.id]
         return (
           <IntegrationDetailDialog
             integration={integration}
@@ -302,9 +356,14 @@ export function OAuthIntegrationsGrid({ autoConnect }: { autoConnect?: string | 
             verified={Boolean(connection?.verifiedAt)}
             busy={busy === integration.id}
             verifying={verifying === integration.id}
-            onConnect={() => connect(integration)}
-            onVerify={() => verify(integration)}
-            onDisconnect={() => disconnect(integration)}
+            onConnect={() => {
+              setDetailId(null)
+              connect(integration)
+            }}
+            // A warehouse's login is a saved credential, managed (re-verified,
+            // rotated, removed) on the credentials page — not a Nango account.
+            onVerify={() => (warehouse ? window.location.assign('/credentials') : verify(integration))}
+            onDisconnect={() => (warehouse ? window.location.assign('/credentials') : disconnect(integration))}
             onClose={() => setDetailId(null)}
           />
         )

@@ -36,6 +36,24 @@ function scopesFromNangoConnection(connection: unknown): string[] {
   ) ?? []
 }
 
+/**
+ * A member verifies only their OWN accounts; an integration admin verifies
+ * every account the workspace has for this integration. Verifying forces Nango
+ * to refresh the provider token, which is not something one member should do
+ * to another member's connection.
+ */
+async function ownConnectionIdsUnlessAdmin(
+  auth: { organizationId: string; dbUser: { id: string }; can: (permission: 'integration.manage') => boolean },
+  connectionIds: string[],
+): Promise<string[]> {
+  if (auth.can('integration.manage') || connectionIds.length === 0) return connectionIds
+  const own = await prisma.nangoConnection.findMany({
+    where: { organizationId: auth.organizationId, userId: auth.dbUser.id, connectionId: { in: connectionIds } },
+    select: { connectionId: true },
+  })
+  return own.map((row) => row.connectionId)
+}
+
 export const POST = withAuthenticatedApi(async (request, auth) => {
   const segments = request.nextUrl.pathname.split('/').filter(Boolean)
   const integrationId = decodeURIComponent(segments.at(-2) ?? '')
@@ -46,7 +64,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // mirror lookup so "connected" is not immediately followed by a false 404.
   for (let attempt = 0; attempt < 3 && connectionIds.length === 0; attempt++) {
     const statuses = await syncOrgNangoConnections(auth.organizationId)
-    connectionIds = statuses[integrationId]?.connectionIds ?? []
+    connectionIds = await ownConnectionIdsUnlessAdmin(auth, statuses[integrationId]?.connectionIds ?? [])
     if (!connectionIds.length && attempt < 2) {
       await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)))
     }
@@ -128,4 +146,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     verifiedAccounts: results.length - failed.length,
     failedAccounts: failed.length,
   }
-}, { permission: 'integration.manage' })
+  // flow.run, not integration.manage: this runs straight after a member's own
+  // Connect UI completes. It only re-reads credentials Nango already holds and
+  // records whether they work — it grants, changes and removes nothing.
+}, { permission: 'flow.run' })

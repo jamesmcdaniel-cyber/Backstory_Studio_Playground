@@ -22,6 +22,8 @@ import { IntegrationLogo } from '@/components/integrations/integration-logo'
 import { ScopeBadge, type ScopeReviewView } from '@/components/integrations/scope-badge'
 import { StalenessBadge } from '@/components/integrations/staleness-badge'
 import { N8nConnectDialog } from '@/components/integrations/n8n-connect-dialog'
+import { ApiCredentialDialog } from '@/components/integrations/api-credential-dialog'
+import { warehouseKindForProvider, type WarehouseKind } from '@/lib/warehouse/hosts'
 import {
   ConnectIntegrationDialog,
   type ConnectableIntegration,
@@ -59,8 +61,10 @@ import { ExternalSecretProviders } from '@/components/credentials/external-secre
  * user who connected them, never a shared workspace identity.
  *
  * Every list endpoint is redacted and flow.read, so all members can audit
- * status; mutations are integration.manage (ADMIN+) and the write affordances
- * hide for everyone else.
+ * status. Anyone who can run flows connects THEIR OWN accounts and API
+ * credentials here (agents act as the person who connected them) and manages
+ * the rows they own; integration admins (ADMIN+) manage every row, and are the
+ * only ones who can revoke or disconnect another person's app account.
  */
 
 type OauthRow = {
@@ -96,16 +100,19 @@ async function fetchJson(url: string): Promise<Record<string, unknown> | null> {
 }
 
 function writeErrorToast(data: unknown, status: number) {
+  // The server's sentence first: a 403 here is usually specific ("You can
+  // rotate only your own credential") and more useful than a generic line.
   const message =
-    status === 403
-      ? 'Only workspace admins can manage credentials.'
-      : (data as { error?: string })?.error || 'The request failed.'
+    (data as { error?: string })?.error ||
+    (status === 403 ? 'Only workspace admins can change credentials other people own.' : 'The request failed.')
   toast.error(message)
 }
 
 export default function CredentialsPage() {
   const { can } = useAuth()
   const canManage = can('integration.manage')
+  // Connecting your own account or API is a member action — the row is yours.
+  const canConnectOwn = can('flow.run')
 
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -116,6 +123,8 @@ export default function CredentialsPage() {
 
   const [connectOpen, setConnectOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [apiOpen, setApiOpen] = useState(false)
+  const [warehouseKind, setWarehouseKind] = useState<WarehouseKind | null>(null)
   const [n8nOpen, setN8nOpen] = useState(false)
   const [rotateHttpTarget, setRotateHttpTarget] = useState<HttpCredentialSummary | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -384,7 +393,9 @@ export default function CredentialsPage() {
 
       {!canManage && loaded && (
         <p className="text-sm text-muted-foreground">
-          You can review credential health here — only workspace admins can connect, rotate, or remove credentials.
+          {canConnectOwn
+            ? 'Connect your own accounts and APIs here, and manage the ones you added. Workspace admins manage everyone else’s.'
+            : 'You can review credential health here — ask a workspace admin to connect accounts or APIs.'}
         </p>
       )}
 
@@ -400,7 +411,7 @@ export default function CredentialsPage() {
             title="App accounts"
             hint="OAuth accounts flows use through Tool steps. Reconnect renews expired tokens; rotate revokes them first — use it when a token may have leaked."
             action={
-              canManage && (
+              canConnectOwn && (
                 <Button variant="outline" size="sm" onClick={() => setConnectOpen(true)}>
                   <Plus className="mr-1.5 h-3.5 w-3.5" /> Connect new
                 </Button>
@@ -430,7 +441,7 @@ export default function CredentialsPage() {
                     </span>
                   }
                   actions={
-                    canManage && (
+                    canConnectOwn && (
                       <>
                         <Button
                           variant="ghost"
@@ -441,25 +452,31 @@ export default function CredentialsPage() {
                         >
                           <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Reconnect
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setOauthConfirm({ kind: 'rotate', row })}
-                          disabled={nangoBusy === row.key}
-                          title="Revoke the stored tokens, then sign in to issue fresh ones — for exposed or leaked tokens"
-                        >
-                          <RotateCw className="mr-1.5 h-3.5 w-3.5" /> Rotate
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-red-600 hover:text-red-700"
-                          onClick={() => setOauthConfirm({ kind: 'disconnect', row })}
-                          disabled={nangoBusy === row.key}
-                          aria-label={`Disconnect ${row.name}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        {/* Rotate and disconnect revoke tokens — for another
+                            person's account too — so they stay admin actions. */}
+                        {canManage && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setOauthConfirm({ kind: 'rotate', row })}
+                              disabled={nangoBusy === row.key}
+                              title="Revoke the stored tokens, then sign in to issue fresh ones — for exposed or leaked tokens"
+                            >
+                              <RotateCw className="mr-1.5 h-3.5 w-3.5" /> Rotate
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={() => setOauthConfirm({ kind: 'disconnect', row })}
+                              disabled={nangoBusy === row.key}
+                              aria-label={`Disconnect ${row.name}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        )}
                       </>
                     )
                   }
@@ -469,10 +486,10 @@ export default function CredentialsPage() {
           </CredentialSection>
 
           <CredentialSection
-            title="HTTP credentials"
-            hint="Reusable auth for HTTP request steps, bound to the host they were verified against. Rotate re-enters the secrets behind the same credential, so no step needs re-wiring."
+            title="API credentials"
+            hint="API keys, tokens and client secrets that HTTP steps and agents call APIs with directly — no app integration needed. Each is bound to the host it was verified against; rotate re-enters the secrets behind the same credential, so no step needs re-wiring."
             action={
-              canManage && (
+              canConnectOwn && (
                 <span className="flex items-center gap-2">
                   {/* Preset over the same store: the saved row IS an HTTP
                       credential, this just spares people knowing the header
@@ -480,15 +497,18 @@ export default function CredentialsPage() {
                   <Button variant="outline" size="sm" onClick={() => setN8nOpen(true)}>
                     <Plus className="mr-1.5 h-3.5 w-3.5" /> Connect n8n
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
-                    <Plus className="mr-1.5 h-3.5 w-3.5" /> New credential
+                  <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)} title="Every auth scheme, including OAuth1, digest, custom headers and external secrets">
+                    Advanced
+                  </Button>
+                  <Button size="sm" onClick={() => setApiOpen(true)}>
+                    <Plus className="mr-1.5 h-3.5 w-3.5" /> Connect an API
                   </Button>
                 </span>
               )
             }
           >
             {http.length === 0 ? (
-              <SectionEmpty>No HTTP credentials yet — add one here or from any HTTP step, then reuse it everywhere.</SectionEmpty>
+              <SectionEmpty>No API credentials yet — Connect an API takes an API key, a bearer or JWT token, or a client ID and secret, then any HTTP step or agent can use it.</SectionEmpty>
             ) : (
               http.map((row) => (
                 <CredentialRow
@@ -516,7 +536,7 @@ export default function CredentialsPage() {
                     </span>
                   }
                   actions={
-                    canManage && (
+                    (row.canManage ?? canManage) && (
                       <>
                         <Button
                           variant="ghost"
@@ -654,7 +674,25 @@ export default function CredentialsPage() {
         onOpenChange={setConnectOpen}
         integrations={connectable}
         busy={nangoBusy}
-        onConnect={(integration) => void connect({ id: integration.id, name: integration.name })}
+        onConnect={(integration) => {
+          // Snowflake and Databricks are in Nango's catalog, but the warehouse
+          // tools run on a saved credential for the warehouse host — a Nango
+          // connection would "connect" and then reach nothing.
+          const warehouse = warehouseKindForProvider(integration.provider) ?? warehouseKindForProvider(integration.name)
+          if (warehouse) {
+            setConnectOpen(false)
+            setWarehouseKind(warehouse)
+            return
+          }
+          void connect({ id: integration.id, name: integration.name })
+        }}
+      />
+      <ApiCredentialDialog
+        open={Boolean(warehouseKind)}
+        onOpenChange={(next) => !next && setWarehouseKind(null)}
+        initialKind={warehouseKind ?? undefined}
+        lockKind
+        onSaved={() => void load()}
       />
 
       <McpConnectionDialog
@@ -695,6 +733,17 @@ export default function CredentialsPage() {
       </Dialog>
 
       <N8nConnectDialog open={n8nOpen} onOpenChange={setN8nOpen} onSaved={() => void load()} />
+      <ApiCredentialDialog
+        open={apiOpen}
+        onOpenChange={setApiOpen}
+        onAdvanced={() => setCreateOpen(true)}
+        onSaved={(credential) => {
+          setHttp((current) => [...current.filter((row) => row.id !== credential.id), credential])
+          // The POST response is the bare redacted row; reload for the
+          // per-caller fields (ownership, staleness) the list adds.
+          void load()
+        }}
+      />
       <HttpCredentialDialog
         open={createOpen || Boolean(rotateHttpTarget)}
         onOpenChange={(next) => {

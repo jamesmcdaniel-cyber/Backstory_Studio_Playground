@@ -2,7 +2,7 @@ import type { AgentTask } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_AGENT_MODEL } from '@/lib/llm/model-runner'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
-import { summarizeConnectedIntegrations } from '@/lib/integrations/integration-count'
+import { listReachableIntegrationKeys } from '@/lib/integrations/connected'
 import { anchorSchedule } from '@/lib/scheduling/due'
 import type { AgentSchedule } from '@/lib/scheduling/due'
 
@@ -53,7 +53,6 @@ function scheduleFromTemplate(value: unknown): Omit<AgentSchedule, 'anchor'> {
   }
 }
 
-/** Referenced integrations that the org/user has NOT connected yet (lowercased match). */
 /**
  * Built-in planes that need no connection or credential to use: a template
  * naming one has nothing for the installer to connect, so it never shows up as
@@ -62,17 +61,35 @@ function scheduleFromTemplate(value: unknown): Omit<AgentSchedule, 'anchor'> {
  */
 export const CONNECTION_FREE_PLANES = new Set(['roi', 'roi analysis', 'repository', 'code', 'artifact', 'adapter checks', 'data tables', 'http api'])
 
+/**
+ * A template's integration reference as the reachability set spells it:
+ * lowercased, without the tool-plane prefix an agent config may carry
+ * (`nango:gmail`, `native:slack` — the connected key is `gmail` / `slack`).
+ */
+export function normalizeIntegrationRef(ref: string): string {
+  return ref.trim().toLowerCase().replace(/^(nango|native):/, '')
+}
+
+/** Pure half of missingIntegrations: the referenced integrations `reachable` lacks. */
+export function unreachableIntegrations(referenced: string[], reachable: ReadonlySet<string>): string[] {
+  const wanted = [...new Set(referenced.map(normalizeIntegrationRef))].filter((r) => r && !CONNECTION_FREE_PLANES.has(r))
+  return wanted.filter((r) => !reachable.has(r))
+}
+
+/**
+ * Referenced integrations that a run in this workspace could NOT reach yet —
+ * what a template's setup checklist turns into "Connect …" items. Asked of
+ * listReachableIntegrationKeys, not of the 3-integration gate's deliberately
+ * narrow count, which never includes Backstory, env-configured Slack/Email or
+ * credential-connected warehouses.
+ */
 export async function missingIntegrations(
   organizationId: string,
   userId: string,
   referenced: string[],
 ): Promise<string[]> {
-  const wanted = [...new Set(referenced.map((r) => r.toLowerCase()))].filter((r) => !CONNECTION_FREE_PLANES.has(r))
-  if (wanted.length === 0) return []
-  const connected = new Set(
-    (await summarizeConnectedIntegrations(organizationId, userId)).providers.map((p) => p.key.toLowerCase()),
-  )
-  return wanted.filter((r) => !connected.has(r))
+  if (unreachableIntegrations(referenced, new Set()).length === 0) return []
+  return unreachableIntegrations(referenced, await listReachableIntegrationKeys(organizationId, userId))
 }
 
 /**

@@ -173,3 +173,73 @@ export async function listConnectedProviders(
 
   return providers
 }
+
+/**
+ * Every integration key a run in this workspace could REACH right now — the
+ * question a template's setup checklist asks ("is there anything left to
+ * connect?"), which is deliberately broader than listConnectedProviders (the
+ * 3-integration gate's count). Reached here and not counted there:
+ *  - the always-on built-ins (HTTP API, Repository, Code, Data Tables…);
+ *  - Backstory: the person's People.ai connection, the org service key, the
+ *    env-configured Backstory MCP, or an MCP connection to it;
+ *  - Slack / Email / Granola / Web Research through any credential that
+ *    resolves, env fallback included (the runtime uses those too);
+ *  - Databricks / Snowflake once a credential for their host is saved.
+ *
+ * Asking listConnectedProviders instead is how a workspace with Backstory
+ * connected was told "Connect backstory" when installing a template.
+ *
+ * Keys are lowercased; each reachable built-in contributes its registry key,
+ * label and provider id so any of the spellings templates use matches.
+ */
+export async function listReachableIntegrationKeys(organizationId: string, userId: string): Promise<Set<string>> {
+  const none = () => null
+  const [{ connectionsRaw, nango }, granolaKey, slackToken, emailKey, researchKey, warehouseHosts, peopleAi, backstoryEnv] = await Promise.all([
+    readPlanes(organizationId),
+    getGranolaApiKey(organizationId).catch(none),
+    getSlackToken(organizationId).catch(none),
+    // Lazy, like the warehouse resolver below: this module is widely imported
+    // and must stay light (a static import of the warehouse resolver once froze
+    // EXECUTION_MODE for every test that touched it).
+    import('@/lib/integrations/email').then(({ getEmailCredential }) => getEmailCredential(organizationId)).catch(none),
+    import('@/lib/integrations/research').then(({ getResearchApiKey }) => getResearchApiKey(organizationId)).catch(none),
+    import('@/lib/warehouse/credentials')
+      .then(({ listWarehouseCredentialHosts }) => listWarehouseCredentialHosts(organizationId))
+      .catch(() => ({ databricks: [] as string[], snowflake: [] as string[] })),
+    prisma.peopleAiConnection
+      .findFirst({ where: { organizationId, userId, status: { not: 'revoked' } }, select: { id: true } })
+      .catch(none),
+    import('@/lib/mcp/backstory-mcp').then(({ backstoryMcpConfigured }) => backstoryMcpConfigured()).catch(() => false),
+  ])
+
+  const reachable = new Set<string>()
+  for (const c of nango) reachable.add(fromNangoProviderKey(c.providerConfigKey).key.toLowerCase())
+  for (const c of connectionsRaw) {
+    reachable.add(`mcp:${c.id.toLowerCase()}`)
+    reachable.add(c.name.trim().toLowerCase())
+  }
+
+  const backstory =
+    Boolean(peopleAi) ||
+    Boolean(process.env.PEOPLE_AI_SERVICE_CLIENT_ID && process.env.PEOPLE_AI_SERVICE_CLIENT_SECRET) ||
+    backstoryEnv ||
+    connectionsRaw.some((c) => /backstory|people\.ai/i.test(`${c.name} ${c.serverUrl}`))
+  const perOrg: Record<string, boolean> = {
+    backstory,
+    granola: Boolean(granolaKey),
+    slack: Boolean(slackToken),
+    email: Boolean(emailKey),
+    research: Boolean(researchKey),
+    databricks: warehouseHosts.databricks.length > 0,
+    snowflake: warehouseHosts.snowflake.length > 0,
+  }
+  for (const c of BUILTIN_CONNECTORS) {
+    if (c.kind === 'nango') continue
+    const ok = c.providerId in perOrg ? perOrg[c.providerId] : c.available()
+    if (!ok) continue
+    reachable.add(c.key.toLowerCase())
+    reachable.add(c.label.toLowerCase())
+    reachable.add(c.providerId)
+  }
+  return reachable
+}

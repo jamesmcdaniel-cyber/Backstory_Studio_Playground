@@ -111,6 +111,15 @@ export function defaultStepLabel(node: FlowNode): string {
  * nodes use their label, else the agent's title, else 'Agent step'; other
  * nodes use their label, else a plain-English type label. The trigger is excluded.
  */
+/**
+ * Normalize a step label for alias lookup: trimmed, lowercased, single-spaced.
+ * Shared by the runtime's label aliasing (features/flows/context) and the
+ * validator, so a token one resolves the other accepts.
+ */
+export function normalizeStepAlias(label: string): string {
+  return label.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
 export function stepLabelsOf(graph: FlowGraph, agents?: { id: string, title: string }[]): Record<string, string> {
   const labels: Record<string, string> = {}
   for (const node of graph.nodes) {

@@ -30,6 +30,9 @@ import { mcpAllowedToolNames, parseAgentToolSettings, type AgentToolSettings } f
 import { parseAgentHttpEndpoints, type AgentHttpEndpoint } from '@/lib/integrations/http-endpoints'
 import { resolveAgentConnectorKeys } from '@/lib/connectors/agent-connectors'
 import { pinnedConnectorKeys, type PublishableAgent } from '@/lib/agents/publish'
+import { BUILTIN_CONNECTORS, nangoConnector } from '@/lib/connectors/registry'
+import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
+import { NANGO_PROVIDER_TOOLS } from '@/lib/nango/provider-tools'
 
 /** A run started from an artifact's chat (binds the artifact plane to it). */
 export type ArtifactRunContext = {
@@ -78,6 +81,57 @@ export async function agentToolConfig(
 }
 
 /**
+ * What a step's granted tool connections (a flow agent step's "Tools granted
+ * for this step", an artifact assistant's toggles — both arrive as
+ * stepOverrides.toolConnectionIds) load, mapped to EXACTLY their own plane.
+ *
+ * The agent's own attachments select planes through the registry's
+ * substring matchers. A grant id must never be fed to them raw: the ref of
+ * `nango:slack_list_channels` is a provider TOOL name, which matched no Nango
+ * selector (so the granted tool silently never loaded) while its 'slack'
+ * substring did match the built-in Slack bot plane and the Nango Slack
+ * delivery plane (so tools nobody granted did load). Each grant is resolved
+ * here to its own descriptor instead:
+ *  - native:<providerId> → that built-in's canonical key, handed to the
+ *    native loader only (the key selects exactly its own descriptor there);
+ *  - nango:<capability>  → the delivery capability, restricted to that id;
+ *  - nango:<toolName>    → `nango:<provider>`, restricted to that one tool.
+ * mcp/people_ai grants need nothing: those planes load for every run.
+ * A grant that names nothing that exists is returned in `unknown` so the run
+ * can say so instead of behaving as though it was never granted.
+ */
+export function stepGrantSelection(connectionIds: readonly string[] = []): {
+  nativeSelectors: string[]
+  nango: { providers: string[]; connectionIds: string[] }
+  unknown: string[]
+} {
+  const nativeSelectors = new Set<string>()
+  const nangoProviders = new Set<string>()
+  const nangoIds = new Set<string>()
+  const unknown: string[] = []
+  for (const id of connectionIds) {
+    const { plane, ref } = parseFlowToolConnectionId(id)
+    if (plane === 'native') {
+      const descriptor = BUILTIN_CONNECTORS.find((c) => c.kind === 'builtin' && c.providerId === ref)
+      if (descriptor) nativeSelectors.add(descriptor.key)
+      else unknown.push(id)
+    } else if (plane === 'nango') {
+      const providerTool = NANGO_PROVIDER_TOOLS.find((tool) => tool.name === ref)
+      if (providerTool) {
+        nangoProviders.add(`nango:${providerTool.provider}`)
+        nangoIds.add(id)
+      } else if (nangoConnector(ref)) {
+        nangoProviders.add(`nango:${ref}`)
+        nangoIds.add(id)
+      } else {
+        unknown.push(id)
+      }
+    }
+  }
+  return { nativeSelectors: [...nativeSelectors], nango: { providers: [...nangoProviders], connectionIds: [...nangoIds] }, unknown }
+}
+
+/**
  * The planes a normal (non-template-copy) agent run draws from, in the order
  * the runtime registers them — order matters, because a duplicate tool name
  * keeps its FIRST registration.
@@ -94,10 +148,13 @@ export async function loadAgentToolGroups(params: {
   agentId?: string
   artifact?: ArtifactRunContext
   executionId?: string
+  /** Extra tool connections granted for this run (see stepGrantSelection). */
+  grantedConnectionIds?: readonly string[]
 }): Promise<ToolPlaneGroup[]> {
   const { organizationId, providers, ownerUserId, artifact } = params
-  const nativeProviders = artifact?.kind === 'roi_dashboard' ? [...providers, 'repository', 'code', 'roi'] : [...providers, 'repository', 'code']
-  const [peopleAiGroup, mcpGroups, nativeGroups, nangoGroups] = await Promise.all([
+  const grants = stepGrantSelection(params.grantedConnectionIds)
+  const nativeProviders = [...providers, ...grants.nativeSelectors, 'repository', 'code', ...(artifact?.kind === 'roi_dashboard' ? ['roi'] : [])]
+  const [peopleAiGroup, mcpGroups, nativeGroups, nangoGroups, grantedNangoGroups] = await Promise.all([
     loadPeopleAiPlaneGroup(organizationId, ownerUserId),
     loadMcpConnectionPlaneGroups(organizationId, ownerUserId),
     loadNativePlaneGroups(organizationId, {
@@ -109,8 +166,25 @@ export async function loadAgentToolGroups(params: {
       executionId: params.executionId,
     }),
     loadNangoPlaneGroups(organizationId, ownerUserId, { providers }),
+    // Granted Nango tools load restricted to exactly the granted ids.
+    grants.nango.connectionIds.length
+      ? loadNangoPlaneGroups(organizationId, ownerUserId, grants.nango)
+      : Promise.resolve([] as ToolPlaneGroup[]),
   ])
-  return [...(peopleAiGroup ? [peopleAiGroup] : []), ...mcpGroups, ...nativeGroups, ...nangoGroups]
+  // A grant the agent already has is loaded once.
+  const own = new Set(nangoGroups.map((group) => group.id))
+  const extra = grantedNangoGroups.filter((group) => !own.has(group.id))
+  const missing = grants.unknown.map((id): ToolPlaneGroup => ({
+    id,
+    plane: parseFlowToolConnectionId(id).plane,
+    name: id,
+    provider: id,
+    serverUrl: '',
+    isWrite: false,
+    tools: [],
+    toolsError: 'This run was granted a tool connection that no longer exists — re-pick it under Tools.',
+  }))
+  return [...(peopleAiGroup ? [peopleAiGroup] : []), ...mcpGroups, ...nativeGroups, ...nangoGroups, ...extra, ...missing]
 }
 
 /** The model-facing name prefix a group's tools are registered under. */

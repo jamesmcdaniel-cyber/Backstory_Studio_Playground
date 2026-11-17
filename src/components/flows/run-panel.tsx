@@ -528,6 +528,22 @@ function RunInputSection({
   )
 }
 
+/**
+ * Read-only review for a viewer who can't annotate (the PATCH refuses anyone
+ * who can't edit the flow): what's been recorded, if anything, and no form.
+ */
+function RunAnnotationSummary({ run }: { run: FlowRunDetail }) {
+  if (!run.annotation && !run.rating && !run.tags?.length) return null
+  return (
+    <div className="space-y-1 border-b border-border px-3 py-2 text-xs">
+      <p className="font-medium">Review</p>
+      {run.rating ? <p className="text-muted-foreground">Rated {run.rating} of 5</p> : null}
+      {run.annotation && <p className="whitespace-pre-wrap text-muted-foreground">{run.annotation}</p>}
+      {run.tags?.length ? <p className="text-muted-foreground">Tags: {run.tags.join(', ')}</p> : null}
+    </div>
+  )
+}
+
 function RunAnnotation({ run }: { run: FlowRunDetail }) {
   const [open, setOpen] = useState(Boolean(run.annotation || run.rating || run.tags?.length))
   const [annotation, setAnnotation] = useState(run.annotation ?? '')
@@ -695,6 +711,7 @@ export function RunPanel({
   onInputChange,
   onRun,
   starting,
+  canAnnotate = true,
 }: {
   runs: { id: string; status: string; startedAt?: string; degraded?: boolean }[]
   selected: FlowRunDetail | null
@@ -711,6 +728,9 @@ export function RunPanel({
   onInputChange?: (value: string) => void
   onRun?: () => void
   starting?: boolean
+  /** Whether this viewer may write a run review — the annotation PATCH needs
+   *  edit rights on the flow. False shows any existing review read-only. */
+  canAnnotate?: boolean
 }) {
   // `waitingAll` is the full list; `waiting` is the single-pause shape older
   // payloads carry, kept as the fallback.
@@ -772,7 +792,7 @@ export function RunPanel({
               )}
               {selected.error && <p className="mt-1 text-xs text-red-600">{selected.error}</p>}
             </div>
-            <RunAnnotation run={selected} />
+            {canAnnotate ? <RunAnnotation run={selected} /> : <RunAnnotationSummary run={selected} />}
             {selected.status === 'waiting' &&
               // One box per live pause: a loop that ran its iterations
               // concurrently can be waiting on several reviews, and each

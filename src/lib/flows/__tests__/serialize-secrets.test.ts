@@ -45,7 +45,7 @@ test('a view-only cross-workspace guest never receives the hash either', () => {
   const out = serializeFlow(
     { ...base, trigger: { type: 'webhook', webhookSecretHash: 'abc123' } },
     'someone-else',
-    { role: 'view', external: true },
+    { role: 'view', external: true, canWrite: true },
   )
   assert.equal(JSON.stringify(out).includes('abc123'), false)
 })

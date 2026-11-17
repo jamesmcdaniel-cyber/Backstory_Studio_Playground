@@ -63,7 +63,9 @@ export function VersionsPanel({
   currentVersion: number
   onView: (version: number) => void
   onViewEdit: (snapshotId: string, at: string) => void
-  onRestore: (version: number) => void
+  /** Absent for a viewer who can't edit the flow: the server refuses the
+   *  restore (FLOW_VIEW_ONLY), so the button isn't offered. */
+  onRestore?: (version: number) => void
   onClose: () => void
 }) {
   const [versions, setVersions] = useState<VersionRow[]>([])
@@ -175,17 +177,19 @@ export function VersionsPanel({
                 <Button variant="ghost" size="sm" onClick={() => onView(row.version)}>
                   View
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    if (window.confirm(`Restore v${row.version} into the draft? Your current draft is replaced (undo with ⌘Z).`)) {
-                      onRestore(row.version)
-                    }
-                  }}
-                >
-                  Restore
-                </Button>
+                {onRestore && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (window.confirm(`Restore v${row.version} into the draft? Your current draft is replaced (undo with ⌘Z).`)) {
+                        onRestore(row.version)
+                      }
+                    }}
+                  >
+                    Restore
+                  </Button>
+                )}
               </div>
             )
           })

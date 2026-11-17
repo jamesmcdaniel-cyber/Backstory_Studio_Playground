@@ -13,6 +13,8 @@ import { HuddleJamPill } from '@/components/flows/huddle-jam-pill'
 import { useGraphHistory } from '@/components/flows/use-graph-history'
 import { useFlowSharing } from '@/components/flows/use-flow-sharing'
 import { useSupabase } from '@/components/providers/supabase-provider'
+import { useAuth } from '@/hooks/use-auth'
+import { viewOnlyNotice } from '@/lib/flows/viewer-gates'
 import { useFlowCollab } from '@/lib/flows/use-flow-collab'
 import { useFlowRunStream } from '@/components/flows/use-flow-run-stream'
 import { useQueueHealth } from '@/components/flows/use-queue-health'
@@ -279,11 +281,19 @@ function FlowBuilder() {
   // Combined with `dirty` (unsaved local edits) to flip Publish ⇄ Unpublish.
   const [unpublishedChanges, setUnpublishedChanges] = useState(false)
   // Share role: 'view' flows are runnable by the org but editable only by the owner.
+  // Server-computed: the sharing role AND the caller's flow.write permission.
   const [canEdit, setCanEdit] = useState(true)
+  // Only the owner (or any editor of a legacy ownerless flow) may change who can
+  // see or edit it — server-computed, like canEdit.
+  const [canChangeSharing, setCanChangeSharing] = useState(false)
   const [visibility, setVisibility] = useState('shared')
   const [ownerId, setOwnerId] = useState<string | null>(null)
   // Cross-workspace guest? (UI hides run/publish/settings; server enforces.)
   const [external, setExternal] = useState(false)
+  // Workspace-role gates for what this viewer may START (cosmetic: every call
+  // is re-checked server-side). A VIEWER member can open a flow but not run it.
+  const { can } = useAuth()
+  const canRun = can('flow.run')
   // Share-link state, including the rule that a role change must not wipe the
   // plaintext token already on screen. See ./use-flow-sharing.
   const sharing = useFlowSharing()
@@ -452,6 +462,7 @@ function FlowBuilder() {
           setPublished(Boolean(flow.published))
           setUnpublishedChanges(Boolean(flow.unpublishedChanges))
           setCanEdit(flow.canEdit !== false)
+          setCanChangeSharing(flow.canChangeSharing === true)
           setVisibility(flow.visibility ?? 'shared')
           setOwnerId(flow.ownerId ?? null)
           setExternal(Boolean(flow.external))
@@ -680,6 +691,14 @@ function FlowBuilder() {
         // Someone outside the jam saved over us — same recovery as manual save.
         toast.error('A teammate saved changes since you opened this — reloading the latest.', { duration: 5000 })
         window.setTimeout(() => window.location.reload(), 800)
+      }
+      if (response.status === 403) {
+        // Not transient: the server will refuse every retry. Say so once, in
+        // its own words, and drop to read-only — which also stops the debounce
+        // re-arming and takes this client out of the persister election, so a
+        // real editor in the jam takes over the saving.
+        toast.error(data.error || 'You can’t edit this flow.', { duration: 8000 })
+        setCanEdit(false)
       }
       return // transient failures: the next edit re-arms the debounce
     }
@@ -1619,7 +1638,7 @@ function FlowBuilder() {
     }))
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      toast.error('Could not change sharing.')
+      toast.error(data.error || 'Could not change sharing.')
       return
     }
     // A settings PUT advances Flow.updatedAt too. Keep the optimistic-lock base
@@ -2295,6 +2314,7 @@ function FlowBuilder() {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
+            readOnly={!canEdit || external}
             className="w-full min-w-0 rounded-lg bg-transparent px-2 py-1 text-base font-semibold outline-none hover:bg-muted focus:bg-muted"
             placeholder="Untitled flow"
             aria-label="Flow name"
@@ -2326,9 +2346,11 @@ function FlowBuilder() {
                 <FileText className="h-4 w-4" /> Edit details…
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onSelect={duplicateFlow}>
-              <Copy className="h-4 w-4" /> Duplicate
-            </DropdownMenuItem>
+            {can('flow.write') && (
+              <DropdownMenuItem onSelect={duplicateFlow}>
+                <Copy className="h-4 w-4" /> Duplicate
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={() => deferDialogFromDropdown(() => setSavingTemplate(true))}>
               <BookmarkPlus className="h-4 w-4" /> Save as template…
             </DropdownMenuItem>
@@ -2359,7 +2381,7 @@ function FlowBuilder() {
             <DropdownMenuItem onSelect={() => void flowImport.importFromUrl()}>
               <Upload className="h-4 w-4" /> From a URL
             </DropdownMenuItem>
-            {canEdit && !external && (
+            {canChangeSharing && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>Sharing</DropdownMenuLabel>
@@ -2378,7 +2400,7 @@ function FlowBuilder() {
                 ))}
               </>
             )}
-            {!external && (
+            {canEdit && !external && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => deferDialogFromDropdown(() => setConfirmDeleteOpen(true))} className="text-red-600 focus:text-red-700">
@@ -2388,7 +2410,7 @@ function FlowBuilder() {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
-        {!external && (
+        {!external && (canEdit || canRun) && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="sm" className="lg:hidden" aria-label="Open flow actions">
@@ -2397,21 +2419,27 @@ function FlowBuilder() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>{dirty ? 'Unsaved details' : published ? `Published v${version}` : 'Draft saved'}</DropdownMenuLabel>
-              <DropdownMenuItem disabled={saving} onSelect={() => void save()}>
-                <Save className="h-4 w-4" /> Save now
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={publishing} onSelect={() => void publish(published && !dirty && !unpublishedChanges ? 'unpublish' : undefined)}>
-                <ShieldCheck className="h-4 w-4" /> {published && !dirty && !unpublishedChanges ? 'Unpublish' : 'Publish'}
-              </DropdownMenuItem>
-              {published && (dirty || unpublishedChanges) && (
-                <DropdownMenuItem onSelect={() => void publish('revert')}>
-                  <Undo2 className="h-4 w-4" /> Revert to published
+              {canEdit && (
+                <>
+                  <DropdownMenuItem disabled={saving} onSelect={() => void save()}>
+                    <Save className="h-4 w-4" /> Save now
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={publishing} onSelect={() => void publish(published && !dirty && !unpublishedChanges ? 'unpublish' : undefined)}>
+                    <ShieldCheck className="h-4 w-4" /> {published && !dirty && !unpublishedChanges ? 'Unpublish' : 'Publish'}
+                  </DropdownMenuItem>
+                  {published && (dirty || unpublishedChanges) && (
+                    <DropdownMenuItem onSelect={() => void publish('revert')}>
+                      <Undo2 className="h-4 w-4" /> Revert to published
+                    </DropdownMenuItem>
+                  )}
+                </>
+              )}
+              {canEdit && canRun && <DropdownMenuSeparator />}
+              {canRun && (
+                <DropdownMenuItem disabled={running || !validation.ok || Boolean(viewingVersion)} onSelect={() => void run()}>
+                  <Play className="h-4 w-4" /> Run flow
                 </DropdownMenuItem>
               )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={running || !validation.ok || Boolean(viewingVersion)} onSelect={() => void run()}>
-                <Play className="h-4 w-4" /> Run flow
-              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -2541,10 +2569,12 @@ function FlowBuilder() {
             )}
           </div>
         )}
-        {!external && <FlowReviewControl flowId={id} prepareRequest={save} disabled={saving || publishing} />}
-        {!external && (
+        {canEdit && !external && <FlowReviewControl flowId={id} prepareRequest={save} disabled={saving || publishing} />}
+        {!external && (canEdit || canRun) && (
           <div className="hidden shrink-0 items-center gap-2 lg:flex">
             <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-border" />
+            {canEdit && (
+            <>
             <Button variant="outline" size="sm" onClick={save} loading={saving} className="relative">
               <Save className="mr-1.5 h-4 w-4" /> Save now
               {dirty && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-400" title="Unsaved changes" />}
@@ -2575,6 +2605,9 @@ function FlowBuilder() {
                 Revert
               </Button>
             )}
+            </>
+            )}
+            {canRun && (
             <Button
               size="sm"
               onClick={run}
@@ -2583,6 +2616,7 @@ function FlowBuilder() {
             >
               {running ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />} Run
             </Button>
+            )}
           </div>
         )}
       </div>
@@ -2591,17 +2625,19 @@ function FlowBuilder() {
         <div className="flex items-center justify-between border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
           <span>Viewing {viewingVersion.label} — read-only</span>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                viewingVersion.source.type === 'version'
-                  ? restoreVersion(viewingVersion.source.version)
-                  : restoreEdit(viewingVersion.source.editId, viewingVersion.source.at)
-              }
-            >
-              {viewingVersion.source.type === 'version' ? 'Restore this version' : 'Restore this edit'}
-            </Button>
+            {canEdit && !external && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  viewingVersion.source.type === 'version'
+                    ? restoreVersion(viewingVersion.source.version)
+                    : restoreEdit(viewingVersion.source.editId, viewingVersion.source.at)
+                }
+              >
+                {viewingVersion.source.type === 'version' ? 'Restore this version' : 'Restore this edit'}
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setViewingVersion(null)}>
               Close
             </Button>
@@ -2625,7 +2661,7 @@ function FlowBuilder() {
       )}
       {!canEdit && !external && (
         <div className="flex items-center justify-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-          View only — you can run this flow, but only its owner can edit it.
+          {viewOnlyNotice({ canWriteFlows: can('flow.write'), canRun })}
         </div>
       )}
 
@@ -2927,7 +2963,8 @@ function FlowBuilder() {
               inputFields={inputFields}
               inputValue={testInput}
               onInputChange={setTestInput}
-              onRun={() => void run()}
+              onRun={canRun ? () => void run() : undefined}
+              canAnnotate={canEdit && !external}
               starting={running}
               labelForNode={labelForNode}
               toolNameForNode={toolNameForNode}
@@ -2973,7 +3010,7 @@ function FlowBuilder() {
               currentVersion={version}
               onView={viewVersion}
               onViewEdit={viewEdit}
-              onRestore={restoreVersion}
+              onRestore={canEdit && !external ? restoreVersion : undefined}
               onClose={() => closePanel('versions')}
             />
           </ResizablePanel>
@@ -2987,6 +3024,7 @@ function FlowBuilder() {
         flowName={name}
         visibility={visibility as 'shared' | 'view' | 'private'}
         canEdit={canEdit && !external}
+        canChangeAccess={canChangeSharing}
         onChangeVisibility={(next) => void updateSharing(next)}
         presence={others.map((p) => ({
           id: p.clientId,

@@ -7,7 +7,7 @@ import { flowGraphSchema, emptyGraph } from '@/lib/flows/graph'
 import { serializeFlow } from '@/lib/flows/serialize'
 import { FLOW_TRIGGER_TYPES, activityMatchColumns, anchorTriggerSchedule, normalizeFlowTrigger, triggerFromGraph } from '@/lib/flows/trigger'
 import { draftTriggerColumns } from '@/lib/flows/trigger-columns'
-import { assertFlowEditable, resolveFlowRole } from '@/lib/flows/access'
+import { assertFlowEditable, assertFlowSharingChangeable, resolveFlowRole } from '@/lib/flows/access'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
 import { shouldGuardFlowWrite } from '@/lib/flows/concurrency'
@@ -69,13 +69,16 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     .map((flow) => flow.id)
   const operationalStatuses = await loadFlowOperationalStatuses(auth.organizationId, localFlowIds)
   const viewer = { userId: auth.dbUser.id, organizationId: auth.organizationId }
+  const canWrite = auth.can('flow.write')
   return {
     success: true,
     flows: flows.map((flow) => {
-      const role = resolveFlowRole({ ...flow, collaboratorRole: flow.collaborators[0]?.role ?? null }, viewer)
+      // A row the query matched but no role resolves for reads as view-only:
+      // the card must never offer edits the PUT would refuse.
+      const role = resolveFlowRole({ ...flow, collaboratorRole: flow.collaborators[0]?.role ?? null }, viewer) ?? 'view'
       const external = flow.organizationId !== auth.organizationId
       return {
-        ...serializeFlow(flow, auth.dbUser.id, role ? { role, external, includeShare: !external && role === 'edit' } : undefined),
+        ...serializeFlow(flow, auth.dbUser.id, { role, external, includeShare: !external && role === 'edit', canWrite }),
         // null is deliberate for a cross-workspace card: it means the viewer
         // has no run-activity grant, whereas idle means the local flow has no
         // active executions.
@@ -142,6 +145,11 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     if (blocked.length) {
       throw new ApiError('Guests can edit the canvas only — name, sharing, and settings stay with the owning workspace.', 403, 'GUEST_GRAPH_ONLY')
     }
+  }
+  // Sharing is the owner's call. Only an actual change is refused, so a client
+  // that echoes the current value back alongside other fields still saves.
+  if (body.visibility !== undefined && body.visibility !== existing.visibility) {
+    assertFlowSharingChangeable(existing, auth.dbUser.id)
   }
   // Optimistic concurrency: when a graph write carries the baseUpdatedAt the
   // client last loaded, reject if the flow has moved on since (a co-editor

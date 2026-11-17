@@ -18,7 +18,19 @@ import type { ExternalAgentSecrets, ExternalAgentView } from '@/lib/agents/exter
  * of the agent setup form — an external agent has no instructions, model or
  * tools of ours to configure.
  */
-export function ExternalAgentSettings({ agentId, onChanged, onRemoved }: { agentId: string; onChanged: () => void; onRemoved: () => void }) {
+export function ExternalAgentSettings({
+  agentId,
+  onChanged,
+  onRemoved,
+  canManage = true,
+}: {
+  agentId: string
+  onChanged: () => void
+  onRemoved: () => void
+  /** api.manage: every change here (edit, pause, rotate, remove) needs it.
+   *  Without it the settings are shown read-only, with who to ask. */
+  canManage?: boolean
+}) {
   const [view, setView] = useState<ExternalAgentView | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [webhookUrl, setWebhookUrl] = useState('')
@@ -109,11 +121,19 @@ export function ExternalAgentSettings({ agentId, onChanged, onRemoved }: { agent
           <h3 className="text-base font-semibold text-foreground">Delivery</h3>
           <p className="mt-0.5 text-sm text-muted-foreground">Where {view.name}&apos;s tasks go, and how long a run waits for its reply.</p>
         </div>
-        <Button variant="outline" size="sm" className="gap-1.5" loading={busy === 'enable'} onClick={() => setEnabled(!view.enabled)}>
-          {view.enabled ? <Pause className="h-3.5 w-3.5" aria-hidden="true" /> : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
-          {view.enabled ? 'Pause' : 'Resume'}
-        </Button>
+        {canManage && (
+          <Button variant="outline" size="sm" className="gap-1.5" loading={busy === 'enable'} onClick={() => setEnabled(!view.enabled)}>
+            {view.enabled ? <Pause className="h-3.5 w-3.5" aria-hidden="true" /> : <Play className="h-3.5 w-3.5" aria-hidden="true" />}
+            {view.enabled ? 'Pause' : 'Resume'}
+          </Button>
+        )}
       </div>
+
+      {!canManage && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Changing an external agent — its delivery, credentials, or removing it — needs a workspace admin. Ask one to make the change.
+        </p>
+      )}
 
       {!view.enabled && (
         <p className="rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-muted-foreground">
@@ -126,7 +146,7 @@ export function ExternalAgentSettings({ agentId, onChanged, onRemoved }: { agent
           <Label htmlFor="ext-edit-webhook">Webhook URL</Label>
           <div className="relative">
             <Globe className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" aria-hidden="true" />
-            <Input id="ext-edit-webhook" type="url" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} className="pl-8" />
+            <Input id="ext-edit-webhook" type="url" value={webhookUrl} readOnly={!canManage} onChange={(event) => setWebhookUrl(event.target.value)} className="pl-8" />
           </div>
           <p className="text-xs text-fg-muted">
             {view.lastDelivery
@@ -139,13 +159,14 @@ export function ExternalAgentSettings({ agentId, onChanged, onRemoved }: { agent
         <div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
           <div className="space-y-1.5">
             <Label htmlFor="ext-edit-capabilities">Built for</Label>
-            <Textarea id="ext-edit-capabilities" rows={2} value={capabilities} maxLength={4000} onChange={(event) => setCapabilities(event.target.value)} />
+            <Textarea id="ext-edit-capabilities" rows={2} value={capabilities} maxLength={4000} readOnly={!canManage} onChange={(event) => setCapabilities(event.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ext-edit-deadline">Wait for a reply</Label>
             <select
               id="ext-edit-deadline"
               value={deadline}
+              disabled={!canManage}
               onChange={(event) => setDeadline(Number(event.target.value))}
               className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
@@ -155,9 +176,11 @@ export function ExternalAgentSettings({ agentId, onChanged, onRemoved }: { agent
             </select>
           </div>
         </div>
-        <div className="flex justify-end">
-          <Button onClick={save} loading={busy === 'save'} disabled={!dirty}>Save changes</Button>
-        </div>
+        {canManage && (
+          <div className="flex justify-end">
+            <Button onClick={save} loading={busy === 'save'} disabled={!dirty}>Save changes</Button>
+          </div>
+        )}
       </div>
 
       <div className="space-y-3 border-t pt-5">
@@ -173,9 +196,11 @@ export function ExternalAgentSettings({ agentId, onChanged, onRemoved }: { agent
                 {view.signingSecretRotatedAt ? `Rotated ${new Date(view.signingSecretRotatedAt).toLocaleDateString()}` : `Set ${new Date(view.createdAt).toLocaleDateString()}`}
               </span>
             </span>
-            <Button size="sm" variant="outline" className="gap-1.5" loading={busy === 'signing_secret'} onClick={() => setConfirming('signing_secret')}>
-              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Rotate
-            </Button>
+            {canManage && (
+              <Button size="sm" variant="outline" className="gap-1.5" loading={busy === 'signing_secret'} onClick={() => setConfirming('signing_secret')}>
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Rotate
+              </Button>
+            )}
           </li>
           <li className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
             <span className="min-w-0">
@@ -186,19 +211,23 @@ export function ExternalAgentSettings({ agentId, onChanged, onRemoved }: { agent
                   : 'Revoked — the agent cannot reply until you issue a new key'}
               </span>
             </span>
-            <Button size="sm" variant="outline" className="gap-1.5" loading={busy === 'api_key'} onClick={() => setConfirming('api_key')}>
-              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> {view.apiKey && !view.apiKey.revoked ? 'Rotate' : 'Issue key'}
-            </Button>
+            {canManage && (
+              <Button size="sm" variant="outline" className="gap-1.5" loading={busy === 'api_key'} onClick={() => setConfirming('api_key')}>
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> {view.apiKey && !view.apiKey.revoked ? 'Rotate' : 'Issue key'}
+              </Button>
+            )}
           </li>
         </ul>
       </div>
 
-      <div className="flex items-center justify-between gap-3 border-t pt-5">
-        <p className="text-sm text-muted-foreground">Removing revokes its key, deletes its endpoint and fails any task still waiting on it.</p>
-        <Button variant="ghost" className="shrink-0 gap-1.5 text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => setConfirming('remove')}>
-          <Trash2 className="h-4 w-4" aria-hidden="true" /> Remove
-        </Button>
-      </div>
+      {canManage && (
+        <div className="flex items-center justify-between gap-3 border-t pt-5">
+          <p className="text-sm text-muted-foreground">Removing revokes its key, deletes its endpoint and fails any task still waiting on it.</p>
+          <Button variant="ghost" className="shrink-0 gap-1.5 text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => setConfirming('remove')}>
+            <Trash2 className="h-4 w-4" aria-hidden="true" /> Remove
+          </Button>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirming !== null}

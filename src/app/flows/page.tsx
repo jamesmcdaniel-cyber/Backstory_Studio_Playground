@@ -25,6 +25,8 @@ import { StaggerItem, StaggerReveal } from '@/components/ui/motion-primitives'
 import { cn } from '@/lib/utils'
 import { cardAccent } from '@/lib/flows/card-accent'
 import { deferDialogFromDropdown } from '@/lib/client/defer-dialog'
+import { flowCardActions } from '@/lib/flows/viewer-gates'
+import { useAuth } from '@/hooks/use-auth'
 
 /** Cards per page on the Flows grid. */
 const PAGE_SIZE = 9
@@ -41,6 +43,10 @@ type FlowItem = {
   stepCount: number
   folder?: string
   updatedAt: string
+  /** Whether THIS viewer may edit it (sharing role AND flow.write) — server-computed. */
+  canEdit?: boolean
+  /** A cross-workspace flow shared with this viewer; its owning workspace keeps the settings. */
+  external?: boolean
 }
 
 // Status → the tokenized Badge variants, same vocabulary as every other status
@@ -53,6 +59,9 @@ const STATUS_VARIANT: Record<string, 'good' | 'warn' | 'secondary'> = {
 
 export default function FlowsPage() {
   const router = useRouter()
+  // Cosmetic gate for actions that create a flow; the server re-checks.
+  const { can } = useAuth()
+  const canWriteFlows = can('flow.write')
   const [flows, setFlows] = useState<FlowItem[]>([])
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
@@ -130,7 +139,8 @@ export default function FlowsPage() {
         body: JSON.stringify({ id: flow.id, folder }),
       })
       if (!response.ok) {
-        toast.error('Could not move the flow.')
+        const data = await response.json().catch(() => ({}))
+        toast.error(data.error || 'Could not move the flow.')
         return
       }
       setFlows((prev) => prev.map((entry) => (entry.id === flow.id ? { ...entry, folder } : entry)))
@@ -308,7 +318,7 @@ export default function FlowsPage() {
             <Link href="/credentials"><KeyRound className="mr-1.5 h-4 w-4" /> Credentials</Link>
           </Button>
           {flowImport.fileInput}
-          {newFlowButton}
+          {canWriteFlows && newFlowButton}
         </div>
       </div>
 
@@ -327,7 +337,7 @@ export default function FlowsPage() {
           icon={Workflow}
           title="No flows yet"
           description="Build your first agent pipeline — chain agents, branch on results, and fan out over accounts."
-          action={newFlowButton}
+          action={canWriteFlows ? newFlowButton : undefined}
         />
       ) : (
         <>
@@ -378,6 +388,7 @@ export default function FlowsPage() {
           <StaggerReveal className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {pageItems.map((flow) => {
               const accent = cardAccent(flow.id)
+              const actions = flowCardActions(flow, canWriteFlows)
               return (
               <StaggerItem key={flow.id}>
                 <Card variant="flat" className={cn('group relative h-full overflow-hidden border-border/60 transition-colors', accent.border)}>
@@ -398,26 +409,34 @@ export default function FlowsPage() {
                             </button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="start">
-                            <DropdownMenuItem onSelect={() => deferDialogFromDropdown(() => editDetails(flow))}>
-                              <Pencil className="mr-2 h-4 w-4" /> Edit details
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => void togglePublish(flow)}>
-                              {flow.published
-                                ? <><CircleOff className="mr-2 h-4 w-4" /> Unpublish</>
-                                : <><Rocket className="mr-2 h-4 w-4" /> Publish</>}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onSelect={() => void duplicateFlow(flow)}>
-                              <Copy className="mr-2 h-4 w-4" /> Duplicate
-                            </DropdownMenuItem>
+                            {actions.edit && (
+                              <DropdownMenuItem onSelect={() => deferDialogFromDropdown(() => editDetails(flow))}>
+                                <Pencil className="mr-2 h-4 w-4" /> Edit details
+                              </DropdownMenuItem>
+                            )}
+                            {actions.publish && (
+                              <DropdownMenuItem onSelect={() => void togglePublish(flow)}>
+                                {flow.published
+                                  ? <><CircleOff className="mr-2 h-4 w-4" /> Unpublish</>
+                                  : <><Rocket className="mr-2 h-4 w-4" /> Publish</>}
+                              </DropdownMenuItem>
+                            )}
+                            {actions.duplicate && (
+                              <DropdownMenuItem onSelect={() => void duplicateFlow(flow)}>
+                                <Copy className="mr-2 h-4 w-4" /> Duplicate
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem onSelect={() => downloadFlow(flow)}>
                               <Download className="mr-2 h-4 w-4" /> Download JSON
                             </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onSelect={() => void deleteFlow(flow)}
-                              className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" /> Delete
-                            </DropdownMenuItem>
+                            {actions.delete && (
+                              <DropdownMenuItem
+                                onSelect={() => void deleteFlow(flow)}
+                                className="text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                         {/* Published is the state that matters — it is what arms
@@ -430,14 +449,18 @@ export default function FlowsPage() {
                       </span>
                       <span className="flex items-center gap-2 text-xs text-muted-foreground">
                         {flow.stepCount} step{flow.stepCount === 1 ? '' : 's'}
-                        <button
-                          type="button"
-                          onClick={() => void moveToFolder(flow)}
-                          className="min-h-8 rounded border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
-                          title="Move to a folder"
-                        >
-                          {flow.folder?.trim() || 'Folder…'}
-                        </button>
+                        {actions.move ? (
+                          <button
+                            type="button"
+                            onClick={() => void moveToFolder(flow)}
+                            className="min-h-8 rounded border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+                            title="Move to a folder"
+                          >
+                            {flow.folder?.trim() || 'Folder…'}
+                          </button>
+                        ) : flow.folder?.trim() ? (
+                          <span className="rounded border border-border/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">{flow.folder.trim()}</span>
+                        ) : null}
                       </span>
                     </div>
                     <Link href={`/flows/${flow.id}`} className="flex items-start gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

@@ -20,6 +20,8 @@ import { AGENTS_CHANGED_EVENT, notifyAgentsChanged } from '@/components/layout/s
 import { getSnapshot, SnapshotError } from '@/lib/client/snapshot'
 import { ConfirmDialog } from '@/components/settings/dialogs'
 import { cn } from '@/lib/utils'
+import { useAuth } from '@/hooks/use-auth'
+import { agentActions, agentPermissions, chatBlockedReason } from '@/lib/agents/viewer-gates'
 
 import type { Agent, Activity } from '@/lib/types'
 import { agentHasLiveRun } from '@/lib/agents/run-status'
@@ -52,6 +54,10 @@ function isConfigured(agent: Agent) {
 function AgentHQ() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  // What this viewer may do with agents — the same permissions the routes
+  // check, so nothing is offered that is certain to be refused.
+  const { can } = useAuth()
+  const permissions = agentPermissions(can)
   const [agents, setAgents] = useState<Agent[]>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [loading, setLoading] = useState(true)
@@ -306,8 +312,14 @@ function AgentHQ() {
 
   // Setup opens only when creating a new agent, editing an incomplete agent,
   // or explicitly toggling configuration for the selected agent.
+  // Only for a viewer who may save it: the form's every button posts to a
+  // route that would otherwise refuse them (agent.write, or api.manage for an
+  // external agent), and a template copy's copilot is configured nowhere here.
   const creatingNew = selectedAgentId === NEW_AGENT
-  const showSetup = creatingNew || Boolean(selectedAgent && (!isConfigured(selectedAgent) || configureOpen))
+  const selectedActions = selectedAgent ? agentActions(selectedAgent, permissions) : null
+  const showSetup = creatingNew
+    ? permissions.canWrite
+    : Boolean(selectedAgent && selectedActions?.configure && (!isConfigured(selectedAgent) || configureOpen))
   const editingAgent = showSetup && selectedAgent && selectedAgentId !== NEW_AGENT ? selectedAgent : null
 
   const selectAgent = (id: string) => {
@@ -321,6 +333,13 @@ function AgentHQ() {
   // Gallery → workspace transitions. No dirty guard needed here: the config
   // form only exists inside the workspace, so the gallery can't be dirty.
   const openAgentFromGallery = (id: string, configure = false) => {
+    // A template copy's copilot lives in its artifact; its own panel cannot
+    // chat, run or save (the routes refuse it), so the card goes there instead.
+    const artifactId = agents.find((agent) => agent.id === id)?.templateCopyArtifactId
+    if (artifactId) {
+      router.push(`/artifacts/${artifactId}`)
+      return
+    }
     setSelectedAgentId(id)
     setConfigureOpen(configure)
     setFocusRunId(null)
@@ -489,6 +508,7 @@ function AgentHQ() {
             onOpenAgent={(id) => openAgentFromGallery(id)}
             onEditAgent={(id) => openAgentFromGallery(id, true)}
             onCreateAgent={createAgentFromGallery}
+            permissions={permissions}
           />
         )}
       </div>
@@ -557,8 +577,14 @@ function AgentHQ() {
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
-                {selectedAgent && isConfigured(selectedAgent) && (
+                {selectedAgent && selectedActions?.openArtifactId && (
+                  <Button variant="outline" size="sm" onClick={() => router.push(`/artifacts/${selectedActions.openArtifactId}`)}>
+                    <FileText className="mr-1.5 h-4 w-4" aria-hidden="true" /> Open its artifact
+                  </Button>
+                )}
+                {selectedAgent && isConfigured(selectedAgent) && selectedActions && (
                   <>
+                    {selectedActions.run && (
                     <Button
                       variant="outline"
                       size="icon"
@@ -571,6 +597,8 @@ function AgentHQ() {
                         ? <Loader2 className="h-4 w-4 animate-spin text-horizon-600" />
                         : <Play className="h-4 w-4" />}
                     </Button>
+                    )}
+                    {(selectedActions.configure || configureOpen) && (
                     <Button
                       variant="outline"
                       size="icon"
@@ -581,14 +609,17 @@ function AgentHQ() {
                     >
                       {configureOpen ? <List className="h-4 w-4" /> : <Settings2 className="h-4 w-4" />}
                     </Button>
+                    )}
                   </>
                 )}
-                <Button
-                  variant="outline"
-                  onClick={() => navigateWithDirtyGuard(() => { setSelectedAgentId(NEW_AGENT); setSetupMode('choice'); setConfigureOpen(false); setFocusRunId(null) })}
-                >
-                  <Plus className="mr-1.5 h-4 w-4" /> New agent
-                </Button>
+                {permissions.canWrite && (
+                  <Button
+                    variant="outline"
+                    onClick={() => navigateWithDirtyGuard(() => { setSelectedAgentId(NEW_AGENT); setSetupMode('choice'); setConfigureOpen(false); setFocusRunId(null) })}
+                  >
+                    <Plus className="mr-1.5 h-4 w-4" /> New agent
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -651,6 +682,7 @@ function AgentHQ() {
               <ExternalAgentSettings
                 key={editingAgent.id}
                 agentId={editingAgent.id}
+                canManage={permissions.canManageApi}
                 onChanged={() => load(true).catch(() => undefined)}
                 onRemoved={() => {
                   notifyAgentsChanged()
@@ -798,7 +830,7 @@ function AgentHQ() {
                   key={editingAgent?.id || NEW_AGENT}
                   editingAgent={editingAgent}
                   onSave={saveAgent}
-                  onRunAgent={editingAgent ? runAgent : undefined}
+                  onRunAgent={editingAgent && permissions.canRun ? runAgent : undefined}
                   runningId={runningId}
                   onOpenRun={(runId) => { setConfigureOpen(false); setFocusRunId(runId) }}
                   onDirtyChange={setConfigDirty}
@@ -811,6 +843,7 @@ function AgentHQ() {
           {!loading && !showSetup && selectedAgent && workspaceTab === 'agent' && (
             <AgentActivityPane
               agent={selectedAgent}
+              canReply={Boolean(selectedActions?.run)}
               activities={agentActivities}
               focusRunId={focusRunId}
               onChanged={() => load(true).catch(() => undefined)}
@@ -868,6 +901,7 @@ function AgentHQ() {
             agent={selectedAgent}
             hasFailedRun={hasFailedRun}
             runOutput={runOutput}
+            composerBlocked={chatBlockedReason(selectedAgent, permissions)}
             onAgentUpdated={() => load(true).catch(() => undefined)}
             onOpenAgent={(agentId) => {
               // Refresh first: an agent the assistant just created may not be

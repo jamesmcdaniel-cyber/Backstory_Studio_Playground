@@ -195,10 +195,13 @@ function HttpEndpointsSection({
   )
 }
 
-function HttpCredentialsPanel({ active }: { active: boolean }) {
+export function HttpCredentialsPanel({ active }: { active: boolean }) {
   const [credentials, setCredentials] = useState<HttpCredentialSummary[] | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
+  // Deleting a credential is workspace-wide, not a detach from this agent —
+  // it breaks every agent and flow that calls with it, so it is confirmed.
+  const [confirmDelete, setConfirmDelete] = useState<HttpCredentialSummary | null>(null)
 
   const load = useCallback(() => {
     fetch('/api/http-credentials?scope=bindable', { cache: 'no-store' })
@@ -219,11 +222,12 @@ function HttpCredentialsPanel({ active }: { active: boolean }) {
     try {
       const response = await fetch(`/api/http-credentials?id=${encodeURIComponent(credential.id)}`, { method: 'DELETE' })
       if (!response.ok) {
-        toast.error('Could not remove that credential.')
+        const data = await response.json().catch(() => ({}))
+        toast.error(data.error || 'Could not delete that credential.')
         return
       }
       setCredentials((current) => (current ?? []).filter((row) => row.id !== credential.id))
-      toast.success(`Removed ${credential.name}.`)
+      toast.success(`Deleted ${credential.name}.`)
     } finally {
       setBusyId(null)
     }
@@ -257,7 +261,8 @@ function HttpCredentialsPanel({ active }: { active: boolean }) {
           <Label>API credentials</Label>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Keys for the APIs this agent calls. Each one is encrypted, locked to a single host, and applied automatically
-            when the agent calls that host — so keys never go in the instructions.
+            when the agent calls that host — so keys never go in the instructions. Credentials are reused across
+            agents and flows, so deleting one here deletes it everywhere.
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setDialogOpen(true)}>
@@ -292,31 +297,58 @@ function HttpCredentialsPanel({ active }: { active: boolean }) {
               >
                 {credential.status === 'verified' ? 'Verified' : 'Needs attention'}
               </Badge>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 shrink-0 px-2 text-xs"
-                disabled={busyId === credential.id}
-                onClick={() => reverify(credential)}
-              >
-                {busyId === credential.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Test'}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                aria-label={`Remove ${credential.name}`}
-                disabled={busyId === credential.id}
-                onClick={() => remove(credential)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              {/* Test and delete are the owner's (or an integration admin's) —
+                  the same rule PATCH/DELETE enforce, served per row. A legacy
+                  shared row is bindable by everyone but managed by admins. */}
+              {credential.canManage ? (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 shrink-0 px-2 text-xs"
+                    disabled={busyId === credential.id}
+                    onClick={() => reverify(credential)}
+                  >
+                    {busyId === credential.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Test'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label={`Delete credential ${credential.name} (all agents & flows)`}
+                    title="Delete credential (all agents & flows)"
+                    disabled={busyId === credential.id}
+                    onClick={() => setConfirmDelete(credential)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              ) : (
+                <span className="shrink-0 text-[11px] text-muted-foreground">
+                  {credential.isSharedLegacy ? 'Shared · admins manage' : 'Owner manages'}
+                </span>
+              )}
             </li>
           ))}
         </ul>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        onOpenChange={(open) => { if (!open) setConfirmDelete(null) }}
+        title={`Delete ${confirmDelete?.name ?? 'this credential'}?`}
+        description="This deletes the credential for the whole workspace, not just this agent. Every agent and flow that calls with it stops authenticating until someone adds a new one."
+        confirmLabel="Delete credential"
+        destructive
+        busy={busyId !== null}
+        onConfirm={async () => {
+          const target = confirmDelete
+          setConfirmDelete(null)
+          if (target) await remove(target)
+        }}
+      />
 
       <HttpCredentialDialog
         open={dialogOpen}
@@ -1012,13 +1044,25 @@ export function AgentConfigForm({
         </div>
         <div>
           <Label>Visibility</Label>
-          <Select value={draft.visibility} onValueChange={(visibility: AgentDraft['visibility']) => setDraft({ ...draft, visibility })}>
-            <SelectTrigger aria-label="Agent visibility"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="shared">Workspace</SelectItem>
-              <SelectItem value="private">Private</SelectItem>
-            </SelectContent>
-          </Select>
+          {/* Who sees an agent is its creator's call — PUT refuses anyone else
+              (Private would hand the agent to its creator and lose it). The
+              server says per agent whether this viewer may change it. */}
+          {editingAgent?.canChangeVisibility === false ? (
+            <>
+              <p className="flex h-9 items-center rounded-md border border-input bg-muted/40 px-3 text-sm" aria-label="Agent visibility">
+                {draft.visibility === 'private' ? 'Private' : 'Workspace'}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">Only the person who created this agent can change who sees it.</p>
+            </>
+          ) : (
+            <Select value={draft.visibility} onValueChange={(visibility: AgentDraft['visibility']) => setDraft({ ...draft, visibility })}>
+              <SelectTrigger aria-label="Agent visibility"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="shared">Workspace</SelectItem>
+                <SelectItem value="private">Private</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
         </div>
       </div>
       <div>

@@ -34,6 +34,7 @@ export function TeammatePanel({
   roleLabel,
   onOpenAgent,
   onEditAgent,
+  canConfigure = () => true,
   onClose,
   onChanged,
 }: {
@@ -45,6 +46,8 @@ export function TeammatePanel({
   roleLabel: string | null
   onOpenAgent: (id: string) => void
   onEditAgent: (id: string) => void
+  /** Whether this viewer may configure that agent — no button when not. */
+  canConfigure?: (agent: Agent) => boolean
   onClose: () => void
   onChanged: () => void
 }) {
@@ -243,15 +246,17 @@ export function TeammatePanel({
                         >
                           <Play className="h-4 w-4" />
                         </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => onEditAgent(agent.id)}
-                          aria-label={`Configure ${agent.title}`}
-                          title="Configure"
-                        >
-                          <Settings2 className="h-4 w-4" />
-                        </Button>
+                        {canConfigure(agent) && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => onEditAgent(agent.id)}
+                            aria-label={`Configure ${agent.title}`}
+                            title="Configure"
+                          >
+                            <Settings2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                       {scopeOpen && <AgentScopePanel agentId={agent.id} className="mt-3 border-t pt-3" />}
                     </li>

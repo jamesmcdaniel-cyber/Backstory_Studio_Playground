@@ -21,6 +21,24 @@ export function assertFlowEditable(flow: { visibility: string; userId: string | 
   throw new ApiError('This flow is view-only — ask its owner to make changes.', 403, 'FLOW_VIEW_ONLY')
 }
 
+/**
+ * Who may change a flow's `visibility`: its owner, or — for a legacy ownerless
+ * row — anyone who may edit it.
+ *
+ * Editing and sharing are different rights. Every non-shared visibility hands
+ * the flow to `flow.userId` ('view' = only the owner edits, 'private' = only
+ * the owner sees it), so a non-owner editor who picked "Only me" was handing
+ * the flow to someone else and locking themselves — and the team — out.
+ */
+export function canChangeFlowSharing(flow: { userId: string | null }, userId: string): boolean {
+  return flow.userId === null || flow.userId === userId
+}
+
+export function assertFlowSharingChangeable(flow: { userId: string | null }, userId: string): void {
+  if (canChangeFlowSharing(flow, userId)) return
+  throw new ApiError('Only this flow’s owner can change who can see or edit it.', 403, 'FLOW_OWNER_REQUIRED')
+}
+
 export type FlowRoleInput = {
   organizationId: string
   visibility: string

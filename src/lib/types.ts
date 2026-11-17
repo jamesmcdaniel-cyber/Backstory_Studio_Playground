@@ -25,6 +25,11 @@ export type Agent = {
   visibility: 'shared' | 'private'
   /** Made automatically for one artifact (its editor or copilot), not by a person. */
   madeForArtifact?: boolean
+  /** Set on a personal template copy's copilot: the artifact it lives in. Listed
+   *  so run links resolve, but only operable from inside that artifact. */
+  templateCopyArtifactId?: string | null
+  /** Whether the viewer may change who can see it — its creator only (server-computed). */
+  canChangeVisibility?: boolean
   status: string
   priority: string
   schedule: { type: string; isActive: boolean }

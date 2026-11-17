@@ -21,6 +21,14 @@ const OPTIONS: { value: Visibility; label: string; hint: string }[] = [
   { value: 'private', label: 'Only you', hint: 'Just you can see this flow.' },
 ]
 
+/** The same three states, described to someone who is NOT the owner — "only
+ *  you" would be a lie to them. */
+const NON_OWNER_HINT: Record<Visibility, string> = {
+  shared: 'Anyone in your workspace can jam on and run this flow.',
+  view: 'Your workspace can open and run it; only its owner makes changes.',
+  private: 'Only its owner can see this flow.',
+}
+
 /** Who the ONE share link works for. Anonymous is a fourth state of the same
  *  choice rather than a separate toggle+link, so the panel never shows two
  *  URLs: pick an audience, copy the link that audience needs. Under the hood
@@ -54,6 +62,7 @@ export function JamDialog({
   flowName,
   visibility,
   canEdit,
+  canChangeAccess = false,
   onChangeVisibility,
   presence,
   onFollow,
@@ -75,6 +84,11 @@ export function JamDialog({
   flowName: string
   visibility: Visibility
   canEdit: boolean
+  /** Whether THIS viewer may change the flow's workspace access — the owner
+   *  only (server-computed `canChangeSharing`). Editing is not enough: every
+   *  non-shared option hands the flow to its owner, so a non-owner choosing
+   *  "Only you" locked themselves and the team out. */
+  canChangeAccess?: boolean
   onChangeVisibility: (next: Visibility) => void
   /** Who else is currently in this flow, if presence is live. `label` +
    *  `needsFollow` describe a teammate on the OTHER builder view, whose cursor
@@ -681,7 +695,7 @@ export function JamDialog({
             </section>
           )}
 
-          {canEdit && !shareable && (
+          {canChangeAccess && !shareable && (
             <section className="px-6 py-4">
               <p className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
                 This flow is private, so there is nothing to share yet. Choose “Everyone can view” or
@@ -694,7 +708,7 @@ export function JamDialog({
             <p className="flex items-center gap-2 text-sm font-medium">
               <Lock className="h-4 w-4 text-muted-foreground" /> Workspace access
             </p>
-            {canEdit ? (
+            {canChangeAccess ? (
               <div className="space-y-1.5">
                 {OPTIONS.map((option) => {
                   const active = visibility === option.value
@@ -724,7 +738,7 @@ export function JamDialog({
               </div>
             ) : (
               <p className="rounded-lg border border-border/70 bg-muted/40 p-3 text-sm text-muted-foreground">
-                {OPTIONS.find((o) => o.value === visibility)?.hint ?? 'Only the owner can change who can access this flow.'}
+                {NON_OWNER_HINT[visibility] ?? ''} Only its owner can change who can access this flow.
               </p>
             )}
           </section>

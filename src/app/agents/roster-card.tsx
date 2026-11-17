@@ -33,6 +33,7 @@ export function RosterCard({
   onOpen,
   onConfigure,
   configureLabel,
+  openLabel,
   scope,
   external = false,
 }: {
@@ -46,8 +47,12 @@ export function RosterCard({
   /** 'working' = set up and on a schedule, 'ready' = set up, 'idle' = unfinished. */
   presence: 'working' | 'ready' | 'idle'
   onOpen: () => void
-  onConfigure: () => void
+  /** Absent when this viewer can't configure it — no settings button is drawn. */
+  onConfigure?: () => void
   configureLabel: string
+  /** Accessible name for the card when opening it does something other than
+   *  opening the agent (a template copy's copilot opens its artifact). */
+  openLabel?: string
   /**
    * What the agent can do, compact: counts and badges from the same
    * resolution a run uses (/api/agents/scope). Omit to leave the line out;
@@ -74,18 +79,21 @@ export function RosterCard({
     <div className="group relative overflow-hidden rounded-2xl border border-gray-200/80 bg-white shadow-1 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200/80 hover:shadow-lg focus-within:shadow-md">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-indigo-50/80 via-slate-50/50 to-transparent opacity-90 transition-opacity duration-200 group-hover:opacity-100" />
       <div className="pointer-events-none absolute -left-8 -top-10 h-24 w-24 rounded-full bg-indigo-100/30 blur-2xl" />
-      <button
-        type="button"
-        onClick={onConfigure}
-        aria-label={configureLabel}
-        title={configureLabel}
-        className="absolute right-2.5 top-2.5 z-10 rounded-lg p-1.5 text-fg-muted opacity-60 transition-all duration-150 hover:bg-gray-100 hover:text-gray-700 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 group-hover:opacity-100"
-      >
-        <Settings2 className="h-4 w-4" aria-hidden="true" />
-      </button>
+      {onConfigure && (
+        <button
+          type="button"
+          onClick={onConfigure}
+          aria-label={configureLabel}
+          title={configureLabel}
+          className="absolute right-2.5 top-2.5 z-10 rounded-lg p-1.5 text-fg-muted opacity-60 transition-all duration-150 hover:bg-gray-100 hover:text-gray-700 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 group-hover:opacity-100"
+        >
+          <Settings2 className="h-4 w-4" aria-hidden="true" />
+        </button>
+      )}
       <button
         type="button"
         onClick={onOpen}
+        aria-label={openLabel}
         className="relative flex w-full flex-col items-center rounded-2xl px-4 pb-4 pt-6 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-300"
       >
         <span

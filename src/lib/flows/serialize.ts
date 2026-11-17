@@ -1,14 +1,19 @@
 import { stepCountOf } from '@/lib/flows/graph'
 import type { FlowGraph } from '@/lib/flows/graph'
-import { canEditFlow } from '@/lib/flows/access'
+import { canChangeFlowSharing, canEditFlow } from '@/lib/flows/access'
 import { parseFlowSettings } from '@/lib/flows/settings'
 import { pollFailure } from '@/lib/flows/poll'
 
 /** How a role-aware caller describes THIS viewer's relationship to the flow.
  *  `includeShare` exposes the share settings (whether a link is live, its role,
  *  anonymous access, view count) — same-org editors only. Never the token
- *  itself: that is stored as a digest and returned once, at mint. */
-export type FlowViewerAccess = { role: 'edit' | 'view'; external: boolean; includeShare?: boolean }
+ *  itself: that is stored as a digest and returned once, at mint.
+ *  `canWrite` is the caller's `flow.write` permission. The sharing role alone
+ *  is not enough: a VIEWER member resolves to 'edit' on a shared flow, and an
+ *  editor built from that role autosaved into a 403 it never showed — and won
+ *  the jam's persister election, so the real editors stopped saving too. It is
+ *  required, not optional, so no role-aware caller can forget it. */
+export type FlowViewerAccess = { role: 'edit' | 'view'; external: boolean; includeShare?: boolean; canWrite: boolean }
 
 /**
  * Strip server-only fields out of the stored trigger before it goes on the wire.
@@ -72,6 +77,14 @@ export function serializeFlow(flow: {
   // wasn't agent-only. Matches stepCountOf() in the flow-template catalogue.
   const stepCount = stepCountOf(graph)
   const published = flow.publishedGraph != null
+  // Whether THIS viewer may edit. Role-aware callers (share/single-flow/list
+  // routes) pass `access`; legacy org-only callers keep the v1 derivation. One
+  // fact drives the editor, its jam presence and the persister election.
+  const canEdit = access
+    ? access.role === 'edit' && access.canWrite
+    : viewerId === undefined
+      ? true
+      : canEditFlow({ visibility: flow.visibility, userId: flow.userId ?? null }, viewerId)
   return {
     id: flow.id,
     name: flow.name,
@@ -86,17 +99,17 @@ export function serializeFlow(flow: {
     // `null` means NOT SCANNED (a flow untouched since scanning shipped), which
     // is not the same as clean — the UI must not present one as the other.
     secrets: summarizeSecretFindings(flow.secretFindings, flow.secretScanAt ?? null),
-    // Whether THIS viewer may edit. Role-aware callers (share/single-flow/list
-    // routes) pass `access`; legacy org-only callers keep the v1 derivation.
-    canEdit: access
-      ? access.role === 'edit'
-      : viewerId === undefined
-        ? true
-        : canEditFlow({ visibility: flow.visibility, userId: flow.userId ?? null }, viewerId),
+    canEdit,
     // Flow owner — persister election prefers the owner's client during a jam.
     ownerId: flow.userId ?? null,
     ...(access && {
       role: access.role,
+      // Whether THIS viewer may change who can see or edit the flow — the same
+      // rule PUT enforces (the owner, or any editor of a legacy ownerless row).
+      // Computed here because the browser holds the auth id while flows are
+      // owned by the database user id, so the client cannot compare them.
+      canChangeSharing: canEdit && !access.external && viewerId !== undefined
+        && canChangeFlowSharing({ userId: flow.userId ?? null }, viewerId),
       // Cross-workspace guest: UI hides run/publish/settings; PUT enforces graph-only.
       external: access.external,
       ...(access.includeShare

@@ -60,7 +60,13 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     },
     orderBy: [{ name: 'asc' }, { createdAt: 'asc' }],
   })
-  return { success: true, resolvers: resolvers.map(response) }
+  return {
+    success: true,
+    resolvers: resolvers.map(response),
+    // Whether THIS caller may create one (POST action:'create' enforces it), so
+    // the step drawer offers "Make per-user" only to someone it will work for.
+    canCreate: auth.can('integration.manage'),
+  }
 }, { permission: 'flow.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {

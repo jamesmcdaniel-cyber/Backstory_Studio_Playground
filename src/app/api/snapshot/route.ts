@@ -118,7 +118,7 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
 
   const body = {
     success: true,
-    agents: agents.map(serializeAgent),
+    agents: agents.map((agent) => serializeAgent(agent, auth.dbUser.id)),
     workspaceFolders,
     activities,
     usage: {

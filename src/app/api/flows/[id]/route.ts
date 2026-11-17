@@ -52,6 +52,6 @@ export const GET = withAuthenticatedApi(async (request, auth) => {
   }
   return {
     success: true,
-    flow: serializeFlow(flow, auth.dbUser.id, { role, external, includeShare: !external && role === 'edit' }),
+    flow: serializeFlow(flow, auth.dbUser.id, { role, external, includeShare: !external && role === 'edit', canWrite: auth.can('flow.write') }),
   }
 }, { permission: 'flow.read' })

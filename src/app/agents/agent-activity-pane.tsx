@@ -492,12 +492,16 @@ function RunRow({
   expanded,
   onToggle,
   onChanged,
+  canReply = true,
 }: {
   activity: Activity
   agentId: string
   expanded: boolean
   onToggle: () => void
   onChanged: () => void
+  /** agent.run: the reply route needs it. Without it the question is shown
+   *  with who can answer, instead of a reply box that only errors. */
+  canReply?: boolean
 }) {
   const [details, setDetails] = useState<RunDetails | null>(null)
   const [reply, setReply] = useState('')
@@ -691,6 +695,7 @@ function RunRow({
               <Markdown className="mb-3 space-y-2 text-amber-900 [&_li]:marker:text-amber-700 [&_strong]:text-amber-950">
                 {activity.metadata?.pendingQuestion?.question || 'The agent asked a question.'}
               </Markdown>
+              {canReply ? (
               <div className="flex gap-2">
                 <Input
                   value={reply}
@@ -702,7 +707,10 @@ function RunRow({
                   {replying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                 </Button>
               </div>
-              {suggested && !reply && (
+              ) : (
+                <p className="text-xs text-amber-800">Your workspace role can’t answer agents — someone who can run this agent needs to reply.</p>
+              )}
+              {canReply && suggested && !reply && (
                 <button type="button" onClick={() => setReply(suggested.content)} className="mt-2 flex items-center gap-1.5 text-xs font-medium text-indigo-700 hover:text-indigo-900">
                   <History className="h-3.5 w-3.5" /> Use previous answer: <span className="italic">“{suggested.content.slice(0, 80)}”</span>
                 </button>
@@ -785,8 +793,11 @@ export function AgentActivityPane({
   focusRunId,
   onChanged,
   onSelectRun,
+  canReply = true,
 }: {
   agent: Agent
+  /** Whether this viewer may answer a waiting run (agent.run). */
+  canReply?: boolean
   activities: Activity[]
   /** Deep-linked run to auto-expand (e.g. ?run= or a fresh manual run). */
   focusRunId?: string | null
@@ -869,6 +880,7 @@ export function AgentActivityPane({
                   setSelectedId(closing ? null : activity.id)
                 }}
                 onChanged={onChanged}
+                canReply={canReply}
               />
             ))}
             {(hiddenCount > 0 || groupExpanded) && items.length > INITIAL_RUNS_PER_GROUP && (

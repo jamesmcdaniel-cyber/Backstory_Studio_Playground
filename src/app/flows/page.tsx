@@ -157,8 +157,10 @@ export default function FlowsPage() {
         name: `${source.name} (copy)`,
         description: source.description || '',
         icon: source.icon || undefined,
+        // No `trigger`: the copy is a fresh draft, so its trigger is the one on
+        // its graph. `source.trigger` is the LIVE trigger of a published source,
+        // which may differ from the draft being copied.
         graph: source.graph,
-        trigger: source.trigger,
         folder: source.folder || undefined,
       }),
     })

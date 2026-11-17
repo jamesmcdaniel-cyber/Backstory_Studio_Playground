@@ -24,6 +24,7 @@ import { buildDataTree } from '@/lib/flows/datatree'
 import { TokenTextEditor, type TokenTextEditorHandle } from '@/components/flows/token-text-editor'
 import type { TokenLabelContext } from '@/lib/flows/token-text'
 import { queueFlowWrite } from '@/lib/flows/flow-write-queue'
+import { ToolArgsEditor } from '@/components/flows/tool-args-editor'
 type MintResult = { ok: boolean; data: { url?: string; secret?: string | null; updatedAt?: string; error?: string } }
 const autoMints = new Map<string, Promise<MintResult>>()
 // An auto-minted secret, kept for this tab: the mint can finish after the
@@ -112,7 +113,23 @@ export type TriggerData = {
 type AvailableTool = { key: string; label: string; connected: boolean }
 
 /** Minimal tool catalog shape the poll picker needs (no step-drawer dependency). */
-export type TriggerToolCatalog = { id: string; name?: string; tools?: { name: string }[] }[]
+export type TriggerToolCatalog = {
+  id: string
+  name?: string
+  tools?: { name: string; inputSchema?: unknown; isWrite?: boolean; writeDependsOnArgs?: boolean; needsApproval?: boolean }[]
+}[]
+
+type TriggerCatalogTool = NonNullable<TriggerToolCatalog[number]['tools']>[number]
+
+/**
+ * Whether the poller will run this tool: it calls it every check with no one
+ * there to approve, so it refuses writes and tools held for approval. A tool
+ * that is a read or a write depending on its inputs (a warehouse query) is
+ * offered — the inputs decide, and publish says if they write.
+ */
+export function pollableTool(tool: TriggerCatalogTool): boolean {
+  return !tool.needsApproval && (!tool.isWrite || tool.writeDependsOnArgs === true)
+}
 
 export type TriggerEditorClasses = { field: string; label: string; smallField: string }
 
@@ -196,6 +213,13 @@ export function TriggerEditor({
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([])
   const type = trigger.type ?? 'manual'
   const schedule = trigger.schedule ?? { type: 'daily', time: '09:00', timezone: 'UTC', isActive: true }
+  // Poll picker: only connections and tools the poller will actually run.
+  const pollConnections = toolCatalog.filter(
+    (conn) => conn.id === trigger.connectionId || (conn.tools ?? []).some(pollableTool),
+  )
+  const pollConnectionTools = toolCatalog.find((c) => c.id === trigger.connectionId)?.tools ?? []
+  const pollTools = pollConnectionTools.filter(pollableTool)
+  const selectedPollTool = pollConnectionTools.find((t) => t.name === trigger.toolName)
   const sampleWebhookBody = JSON.stringify({ input: { account: 'Acme', priority: 'high' } }, null, 2)
   const webhookHeader = webhook?.secret ? `x-trigger-secret: ${webhook.secret}` : 'x-trigger-secret: <secret>'
   const curlExample = webhook
@@ -477,7 +501,7 @@ export function TriggerEditor({
               onChange={(e) => onChange({ ...trigger, connectionId: e.target.value || undefined, toolName: undefined })}
             >
               <option value="">Select a connection…</option>
-              {toolCatalog.map((conn) => (
+              {pollConnections.map((conn) => (
                 <option key={conn.id} value={conn.id}>{conn.name || conn.id}</option>
               ))}
             </select>
@@ -492,12 +516,30 @@ export function TriggerEditor({
               disabled={!trigger.connectionId}
             >
               <option value="">Select a read action…</option>
-              {(toolCatalog.find((c) => c.id === trigger.connectionId)?.tools ?? []).map((t) => (
+              {pollTools.map((t) => (
                 <option key={t.name} value={t.name}>{t.name}</option>
               ))}
+              {/* A stored choice the poller would refuse stays visible (the
+                  Checker says why) instead of the select silently going blank. */}
+              {selectedPollTool && !pollableTool(selectedPollTool) && (
+                <option value={selectedPollTool.name}>{selectedPollTool.name} (can&apos;t be polled)</option>
+              )}
             </select>
-            <p className="mt-1.5 text-xs text-muted-foreground">Pick a read action (e.g. list records). It runs on the schedule below; only items you haven&apos;t seen before start the flow.</p>
+            <p className="mt-1.5 text-xs text-muted-foreground">Pick a read action (e.g. list records). It runs on the schedule below; only items you haven&apos;t seen before start the flow. Actions that change things, or that need approval, can&apos;t be polled.</p>
           </div>
+          {selectedPollTool && (
+            // The same schema-driven inputs a tool step gets. No upstream data:
+            // nothing runs before the trigger, so the values are fixed.
+            <ToolArgsEditor
+              key={`${trigger.connectionId}:${selectedPollTool.name}`}
+              inputSchema={selectedPollTool.inputSchema}
+              args={typeof trigger.args === 'string' ? trigger.args : undefined}
+              onChange={(args) => onChange({ ...trigger, args: args || undefined })}
+              dataFields={[]}
+              labelCtx={TRIGGER_LABEL_CTX}
+              argsLabel="Action inputs"
+            />
+          )}
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className={label} htmlFor={`${uid}-dedupe-key`}>New-item id field</label>

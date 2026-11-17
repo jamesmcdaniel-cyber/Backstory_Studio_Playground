@@ -19,6 +19,7 @@
  * ids, names, and tool schemas.
  */
 import {
+  flowToolWriteClass,
   loadMcpConnectionPlaneGroups,
   loadNangoPlaneGroups,
   loadNativePlaneGroups,
@@ -29,7 +30,19 @@ import { planesForConnectionIds, parseFlowToolConnectionId } from '@/lib/flows/t
 
 export { mcpConnectionScope } from '@/features/agents/tool-planes'
 
-export type FlowToolSummary = { name: string; description: string; inputSchema?: unknown; outputSchema?: unknown }
+export type FlowToolSummary = {
+  name: string
+  description: string
+  inputSchema?: unknown
+  outputSchema?: unknown
+  /** The tool changes things (see flowToolWriteClass). Absent = a read. */
+  isWrite?: true
+  /** Read or write depends on the call's args (a warehouse SQL statement). */
+  writeDependsOnArgs?: true
+  /** "Needs approval" in Integrations: a step queues an approval first, and
+   *  anything that cannot stop to ask (a polling trigger) is refused it. */
+  needsApproval?: true
+}
 export type FlowToolCatalogConnection = { id: string; name: string; tools: FlowToolSummary[]; toolsError?: string; provider?: string; blockedTools?: string[] }
 
 export async function loadFlowToolCatalog(
@@ -74,11 +87,21 @@ export async function loadFlowToolCatalog(
       // Names only, never schemas: lets validation say a step's tool was
       // turned off in Integrations rather than that it does not exist.
       ...(group.blockedTools?.length ? { blockedTools: group.blockedTools } : {}),
-      tools: group.tools.slice(0, options.takeTools ?? 100).map((tool) => ({
-        name: tool.name,
-        description: tool.description ?? '',
-        inputSchema: tool.inputSchema ?? null,
-        outputSchema: tool.outputSchema ?? null,
-      })),
+      tools: group.tools.slice(0, options.takeTools ?? 100).map((tool): FlowToolSummary => {
+        // Read/write and approval travel with each tool so the poll trigger's
+        // picker can offer only what the poller will actually run, and publish
+        // can refuse the rest — the poller itself only logs and skips.
+        const { plane, ref } = parseFlowToolConnectionId(group.id)
+        const writeClass = flowToolWriteClass(plane, ref, tool.name)
+        return {
+          name: tool.name,
+          description: tool.description ?? '',
+          inputSchema: tool.inputSchema ?? null,
+          outputSchema: tool.outputSchema ?? null,
+          ...(writeClass === 'write' ? { isWrite: true as const } : {}),
+          ...(writeClass === 'args' ? { writeDependsOnArgs: true as const } : {}),
+          ...(tool.policy === 'approve' ? { needsApproval: true as const } : {}),
+        }
+      }),
     }))
 }

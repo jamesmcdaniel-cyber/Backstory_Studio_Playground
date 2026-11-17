@@ -14,7 +14,7 @@ import { DEFAULT_SNOWFLAKE_DEADLINE_MS, runSnowflakeStatement, snowflakeRequest,
 import { resolveWarehouseHost, warehouseCredentialForHost, type WarehouseKind } from './credentials'
 import { DATABRICKS_API_TOOLS, DATABRICKS_API_TOOL_NAMES, databricksFileStore, runDatabricksApiTool, type DatabricksFileStore } from './databricks-tools'
 
-export { warehouseToolIsWrite } from './tool-classify'
+export { warehouseToolClassifiedPerCall, warehouseToolIsWrite } from './tool-classify'
 
 /**
  * The warehouse planes — Databricks and Snowflake as tools for flow `tool`

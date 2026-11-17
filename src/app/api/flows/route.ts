@@ -5,7 +5,8 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { flowGraphSchema, emptyGraph } from '@/lib/flows/graph'
 import { serializeFlow } from '@/lib/flows/serialize'
-import { FLOW_TRIGGER_TYPES, activityMatchColumns, anchorTriggerSchedule, normalizeFlowTrigger, preserveWebhookSecretHash, triggerFromGraph } from '@/lib/flows/trigger'
+import { FLOW_TRIGGER_TYPES, activityMatchColumns, anchorTriggerSchedule, normalizeFlowTrigger, triggerFromGraph } from '@/lib/flows/trigger'
+import { draftTriggerColumns } from '@/lib/flows/trigger-columns'
 import { assertFlowEditable, resolveFlowRole } from '@/lib/flows/access'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
@@ -171,12 +172,12 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     ...(body.visibility !== undefined && { visibility: body.visibility }),
     ...(body.folder !== undefined && { folder: body.folder }),
     ...(body.settings !== undefined && { settings: jsonValue(body.settings) }),
-    // Preserve the webhook secret hash across trigger edits — the client
-    // never sees it, so a plain PUT would silently wipe it.
-    ...(nextTrigger !== undefined && (() => {
-      const anchored = anchorTriggerSchedule(preserveWebhookSecretHash(nextTrigger, existing.trigger), existing.trigger)
-      return { trigger: jsonValue(anchored), ...activityMatchColumns(anchored) }
-    })()),
+    // The trigger columns follow the draft only while nothing is published —
+    // once it is, they hold the LIVE trigger and only publish rewrites them, so
+    // an autosave can't re-arm or disarm the running flow. The helper keeps the
+    // webhook secret hash (the client never sees it) and an unchanged
+    // schedule's anchor, and drops the poll cursor when the poll's read changes.
+    ...(nextTrigger !== undefined ? draftTriggerColumns(nextTrigger, existing) ?? {} : {}),
     ...(body.graph !== undefined && { graph: jsonValue(body.graph) }),
     ...(body.clearImportNotes ? { importNotes: Prisma.DbNull } : {}),
   }

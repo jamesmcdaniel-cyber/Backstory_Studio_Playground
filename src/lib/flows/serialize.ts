@@ -2,6 +2,7 @@ import { stepCountOf } from '@/lib/flows/graph'
 import type { FlowGraph } from '@/lib/flows/graph'
 import { canEditFlow } from '@/lib/flows/access'
 import { parseFlowSettings } from '@/lib/flows/settings'
+import { pollFailure } from '@/lib/flows/poll'
 
 /** How a role-aware caller describes THIS viewer's relationship to the flow.
  *  `includeShare` exposes the share settings (whether a link is live, its role,
@@ -27,6 +28,10 @@ function publicTrigger(trigger: unknown): unknown {
   return Object.fromEntries(
     Object.entries(trigger as Record<string, unknown>).filter(([key]) => key !== 'webhookSecretHash'),
   )
+}
+
+function isPollTrigger(trigger: unknown): boolean {
+  return Boolean(trigger && typeof trigger === 'object' && (trigger as { type?: unknown }).type === 'poll')
 }
 
 /** Wire shape for a flow, shared by the list page and the builder. */
@@ -55,6 +60,8 @@ export function serializeFlow(flow: {
   /// Save-time secret scan: literal credentials found in the graph.
   secretFindings?: unknown
   secretScanAt?: Date | null
+  /** Polling-trigger state; only its failure marker is surfaced. */
+  pollCursor?: unknown
   createdAt: Date
   updatedAt: Date
 }, viewerId?: string, access?: FlowViewerAccess) {
@@ -111,6 +118,11 @@ export function serializeFlow(flow: {
     published,
     // True when the draft differs from what's published (or nothing is published).
     unpublishedChanges: !published || JSON.stringify(flow.publishedGraph) !== JSON.stringify(graph),
+    // The last check of a published polling trigger failed: the poller refused
+    // the tool or the app errored, so the flow is not firing. Shown in the
+    // builder until a check succeeds. Not for a cross-workspace guest, who has
+    // no grant to this flow's run activity.
+    pollFailure: published && !access?.external && isPollTrigger(flow.trigger) ? pollFailure(flow.pollCursor) : null,
     createdAt: flow.createdAt,
     updatedAt: flow.updatedAt,
   }

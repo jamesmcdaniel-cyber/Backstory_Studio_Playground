@@ -49,7 +49,7 @@ import { parseFlowInput } from '@/lib/flows/input'
 import { httpOutputFields, outputFieldsFromJsonSchema } from '@/lib/flows/schema-fields'
 import { validateFlowGraph } from '@/lib/flows/validate'
 import type { FieldIssue } from '@/lib/flows/issue-fields'
-import { triggerInputFieldsFromTrigger } from '@/lib/flows/trigger'
+import { triggerDraftDiff, triggerInputFieldsFromTrigger, triggerTypeLabel } from '@/lib/flows/trigger'
 import { defaultStepLabel, stepLabelsOf } from '@/lib/flows/token-text'
 import { planSubflowExtraction, replaceRangeWithSubflow } from '@/lib/flows/subflow-extract'
 import { missingRequiredInputFields } from '@/lib/flows/input-validation'
@@ -278,6 +278,15 @@ function FlowBuilder() {
   // True when the saved draft differs from the published graph (server-derived).
   // Combined with `dirty` (unsaved local edits) to flip Publish ⇄ Unpublish.
   const [unpublishedChanges, setUnpublishedChanges] = useState(false)
+  // The trigger the PUBLISHED flow fires on (Flow.trigger), which a draft edit
+  // no longer changes — so the builder can say when the canvas's trigger isn't
+  // live yet. And the last failed check of a published polling trigger.
+  const [liveTrigger, setLiveTrigger] = useState<unknown>(null)
+  const [pollFailure, setPollFailure] = useState<{ message: string; at: string } | null>(null)
+  const adoptLiveState = useCallback((flow: { published?: boolean; trigger?: unknown; pollFailure?: { message: string; at: string } | null }) => {
+    setLiveTrigger(flow.published ? flow.trigger ?? null : null)
+    setPollFailure(flow.pollFailure ?? null)
+  }, [])
   // Share role: 'view' flows are runnable by the org but editable only by the owner.
   const [canEdit, setCanEdit] = useState(true)
   const [visibility, setVisibility] = useState('shared')
@@ -451,6 +460,7 @@ function FlowBuilder() {
           setVersion(flow.version ?? 1)
           setPublished(Boolean(flow.published))
           setUnpublishedChanges(Boolean(flow.unpublishedChanges))
+          adoptLiveState(flow)
           setCanEdit(flow.canEdit !== false)
           setVisibility(flow.visibility ?? 'shared')
           setOwnerId(flow.ownerId ?? null)
@@ -501,7 +511,7 @@ function FlowBuilder() {
     return () => {
       cancelled = true
     }
-  }, [id, searchParams, resetGraph, hydrateSharing])
+  }, [id, searchParams, resetGraph, hydrateSharing, adoptLiveState])
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
@@ -1396,7 +1406,9 @@ function FlowBuilder() {
   }, [selectedNode, selectedRun])
 
   const validation = useMemo(
-    () => validateFlowGraph(graph, { agents, toolCatalog, httpCredentials, flowId: id }),
+    // checkPollTool: say in the Checker what publish will refuse about a
+    // polling trigger's tool — once the catalog has loaded, not before.
+    () => validateFlowGraph(graph, { agents, toolCatalog, httpCredentials, flowId: id, checkPollTool: toolCatalog.length > 0 }),
     [graph, agents, toolCatalog, httpCredentials, id],
   )
 
@@ -1496,6 +1508,7 @@ function FlowBuilder() {
         if (action === 'revert' && data.flow?.graph) replaceGraph(data.flow.graph)
         setVersion(data.flow?.version ?? version)
         setPublished(Boolean(data.flow?.published))
+        if (data.flow) adoptLiveState(data.flow)
         if (data.flow?.status) setStatus(data.flow.status)
         if (data.flow) setUnpublishedChanges(Boolean(data.flow.unpublishedChanges))
         toast.success(
@@ -1509,7 +1522,7 @@ function FlowBuilder() {
         setPublishing(false)
       }
     },
-    [id, save, validation, version, replaceGraph, writeFlow, graph.nodes],
+    [id, save, validation, version, replaceGraph, writeFlow, graph.nodes, adoptLiveState],
   )
 
   const pollRuns = useCallback(() => {
@@ -2608,6 +2621,30 @@ function FlowBuilder() {
           </div>
         </div>
       )}
+
+      {published && !viewingVersion && (() => {
+        // The published flow keeps firing on the trigger it was published with;
+        // an edit to the canvas's trigger takes effect only on publish.
+        const draftTrigger = (graph.nodes.find((node) => node.type === 'trigger')?.data as { trigger?: unknown } | undefined)?.trigger
+        const diff = liveTrigger ? triggerDraftDiff(liveTrigger, draftTrigger) : null
+        if (!diff && !pollFailure) return null
+        const liveType = (liveTrigger as { type?: unknown } | null)?.type
+        return (
+          <div role="status" className="flex flex-col items-center gap-0.5 border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-xs font-medium text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
+            {diff === 'type' && (
+              <span>
+                The live flow still starts {triggerTypeLabel(liveType)}. Publish to switch it to start {triggerTypeLabel((draftTrigger as { type?: unknown } | undefined)?.type)}.
+              </span>
+            )}
+            {diff === 'config' && <span>Your trigger changes aren’t live yet — the published flow keeps its current trigger settings until you publish.</span>}
+            {pollFailure && (
+              <span>
+                The last check for new items failed ({new Date(pollFailure.at).toLocaleString()}): {pollFailure.message}
+              </span>
+            )}
+          </div>
+        )
+      })()}
 
       {/* The live channel is authorized by Postgres and fails CLOSED, so a
           refusal is stated plainly rather than degrading into a silently

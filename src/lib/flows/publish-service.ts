@@ -6,12 +6,8 @@ import { assertFlowEditable } from '@/lib/flows/access'
 import { serializeFlow } from '@/lib/flows/serialize'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { validateFlowGraph, validationErrorMessage } from '@/lib/flows/validate'
-import {
-  activityMatchColumns,
-  anchorTriggerSchedule,
-  preserveWebhookSecretHash,
-  triggerFromGraph,
-} from '@/lib/flows/trigger'
+import { triggerFromGraph } from '@/lib/flows/trigger'
+import { draftGraphTriggerColumns, publishedTriggerColumns } from '@/lib/flows/trigger-columns'
 import { loadRunValidationContext } from '@/lib/flows/run-validation'
 import { recordAudit } from '@/lib/audit'
 import { summarizeGraphChange } from '@/lib/flows/edit-summary'
@@ -43,9 +39,17 @@ async function editableFlow({ flowId, organizationId, userId }: PublishActor) {
 export async function revertFlowDraft(actor: PublishActor) {
   const existing = await editableFlow(actor)
   if (existing.publishedGraph == null) throw new ApiError('Nothing published to revert to', 400, 'NO_PUBLISHED')
+  // Draft saves never touch a published flow's trigger columns, so the live
+  // trigger is already the published graph's. Re-stating it from that graph is
+  // a no-op for such a row (same secret, same anchor, same poll cursor) and
+  // repairs one whose columns a draft save wrote before that rule existed.
+  const published = flowGraphSchema.safeParse(existing.publishedGraph)
   const flow = await prisma.flow.update({
     where: { id: actor.flowId, organizationId: actor.organizationId },
-    data: { graph: existing.publishedGraph },
+    data: {
+      graph: existing.publishedGraph,
+      ...(published.success ? publishedTriggerColumns(published.data, existing).columns : {}),
+    },
   })
   return serializeFlow(flow)
 }
@@ -54,9 +58,13 @@ export async function revertFlowDraft(actor: PublishActor) {
 export async function unpublishFlowDraft(actor: PublishActor) {
   const existing = await editableFlow(actor)
   if (existing.publishedGraph == null) throw new ApiError('Flow is not published', 400, 'NOT_PUBLISHED')
+  // With nothing live, the trigger columns go back to following the draft —
+  // the same state a never-published flow is in.
+  const draft = flowGraphSchema.safeParse(existing.graph)
+  const triggerColumns = draft.success ? draftGraphTriggerColumns(draft.data, { trigger: existing.trigger, publishedGraph: null }) : null
   const flow = await prisma.flow.update({
     where: { id: actor.flowId, organizationId: actor.organizationId },
-    data: { publishedGraph: Prisma.DbNull, status: 'DRAFT' },
+    data: { publishedGraph: Prisma.DbNull, status: 'DRAFT', ...(triggerColumns ?? {}) },
   })
   await recordAudit({
     organizationId: actor.organizationId,
@@ -111,7 +119,11 @@ export async function publishFlowDraft(actor: PublishActor) {
   const graphTriggerType = triggerFromGraph(graph, existing.trigger).type
   const isEventTrigger = graphTriggerType === 'activity' || graphTriggerType === 'slack'
   const [context, slackConnected, org] = await Promise.all([
-    loadRunValidationContext(graph, { organizationId: actor.organizationId, userId: actor.userId }),
+    loadRunValidationContext(
+      graph,
+      { organizationId: actor.organizationId, userId: actor.userId },
+      { includePollTrigger: graphTriggerType === 'poll' },
+    ),
     graphTriggerType === 'slack' ? slackConfigured(actor.organizationId) : Promise.resolve(undefined),
     isEventTrigger
       ? prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { plan: true, kind: true } })
@@ -127,6 +139,7 @@ export async function publishFlowDraft(actor: PublishActor) {
     httpCredentials: context.httpCredentials,
     credentialResolvers: context.credentialResolvers,
     webhookSecretConfigured: typeof persistedTrigger.webhookSecretHash === 'string',
+    checkPollTool: graphTriggerType === 'poll',
     ...(graphTriggerType === 'slack' ? { slackWorkspaceConnected: slackConnected === true } : {}),
     ...(isEventTrigger ? { eventTriggerEntitled: org ? canArmEventTriggers(org) : false } : {}),
   })
@@ -139,20 +152,19 @@ export async function publishFlowDraft(actor: PublishActor) {
   })
   const nextVersion = (latestSnapshot?.version ?? 0) + 1
   const versionSummary = summarizeGraphChange(latestSnapshot?.graph ?? { nodes: [], edges: [] }, existing.graph ?? {})
-  const nextTrigger = anchorTriggerSchedule(
-    preserveWebhookSecretHash(triggerFromGraph(graph, existing.trigger), existing.trigger),
-    existing.publishedGraph == null ? null : existing.trigger,
-  )
-  const trigger = jsonValue(nextTrigger)
+  // The only step that arms a trigger: the row's trigger columns now describe
+  // the graph being published (see trigger-columns.ts), and a poll whose read
+  // changed — or that is being armed afresh — baselines again.
+  const { columns } = publishedTriggerColumns(graph, existing)
+  const trigger = columns.trigger
   const flow = await tenantTransaction(actor.organizationId, async (tx) => {
     const updated = await tx.flow.update({
       where: { id: actor.flowId, organizationId: actor.organizationId },
       data: {
-        trigger,
+        ...columns,
         publishedGraph: existing.graph ?? {},
         version: nextVersion,
         status: 'ACTIVE',
-        ...activityMatchColumns(nextTrigger),
       },
     })
     await tx.flowVersion.create({

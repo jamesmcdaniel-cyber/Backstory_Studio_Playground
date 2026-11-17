@@ -1,6 +1,6 @@
 import { nativeFlowPackage, nativeFlowPackageSchema } from '@/lib/flows/native-package'
 import { serializeFlow } from '@/lib/flows/serialize'
-import { activityMatchColumns, triggerFromGraph } from '@/lib/flows/trigger'
+import { draftGraphTriggerColumns } from '@/lib/flows/trigger-columns'
 import { prisma } from '@/lib/prisma'
 import { authenticatePublicApi, publicApiJson } from '@/lib/public-api/auth'
 import { agentVisibilityScope } from '@/lib/server/visibility'
@@ -40,20 +40,28 @@ export async function PUT(request: Request) {
   const parsed = nativeFlowPackageSchema.safeParse(raw)
   if (!parsed.success) return publicApiJson({ error: { code: 'INVALID_PACKAGE', message: 'Expected a backstory.flow.v1 package.', issues: parsed.error.issues } }, 400)
   const id = idOf(request)
-  const trigger = triggerFromGraph(parsed.data.flow.graph)
+  const scope = { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.userId) }
+  const existing = await prisma.flow.findFirst({ where: scope, select: { trigger: true, publishedGraph: true, updatedAt: true } })
+  if (!existing) return publicApiJson({ error: { code: 'NOT_FOUND', message: 'Flow not found.' } }, 404)
+  // Same trigger rules as the builder's save: a package graph never carries
+  // the webhook secret hash (the export strips it), so it is kept from the
+  // row; an unchanged schedule keeps its anchor; and a published flow's live
+  // trigger is left for publish to change.
+  const triggerColumns = draftGraphTriggerColumns(parsed.data.flow.graph, existing) ?? {}
   const updated = await prisma.flow.updateMany({
-    where: { id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.userId) },
+    // Conditional on the row we derived from, so a concurrent save can't have
+    // its trigger (or secret) overwritten with one computed from older state.
+    where: { ...scope, updatedAt: existing.updatedAt },
     data: {
       name: parsed.data.flow.name,
       description: parsed.data.flow.description,
       folder: parsed.data.flow.folder,
       visibility: parsed.data.flow.visibility,
       graph: JSON.parse(JSON.stringify(parsed.data.flow.graph)),
-      trigger: JSON.parse(JSON.stringify(trigger)),
-      ...activityMatchColumns(trigger),
+      ...triggerColumns,
     },
   })
-  if (!updated.count) return publicApiJson({ error: { code: 'NOT_FOUND', message: 'Flow not found.' } }, 404)
+  if (!updated.count) return publicApiJson({ error: { code: 'CONFLICT', message: 'The flow changed while it was being updated — retry.' } }, 409)
   const flow = await prisma.flow.findFirstOrThrow({ where: { id, organizationId: auth.organizationId } })
   await recordAudit({ organizationId: auth.organizationId, actorUserId: auth.userId, action: 'flow.api_updated', resourceType: 'flow', resourceId: id, detail: { format: 'backstory.flow.v1' } }).catch(() => undefined)
   return publicApiJson({ data: serializeFlow(flow) })

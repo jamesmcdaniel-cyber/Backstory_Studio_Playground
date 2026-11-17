@@ -1,4 +1,6 @@
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { pollIdentityChanged } from '@/lib/flows/trigger'
 import { apiLogger } from '@/lib/logger'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { resolveFlowToolExecutor } from '@/features/agents/tool-planes'
@@ -39,32 +41,35 @@ export async function runFlowPoll(flow: PollFlow, userId: string, now: Date): Pr
   const connectionId = String(trigger.connectionId || '')
   const toolName = String(trigger.toolName || '')
   if (!connectionId || !toolName) return { dispatched: 0 }
+  const cursor = storedPollCursor(flow.pollCursor)
 
-  let args: Record<string, unknown> = {}
-  if (typeof trigger.args === 'string') {
-    try {
-      args = prepareToolArgs(JSON.parse(trigger.args))
-    } catch {
-      args = {}
-    }
-  } else if (trigger.args && typeof trigger.args === 'object') {
-    args = prepareToolArgs(trigger.args)
-  }
-
-  const { plane, ref } = parseFlowToolConnectionId(connectionId)
-  // The args go in so a tool classified per call (a warehouse SELECT) can be
-  // polled while the same tool running a DELETE cannot.
-  const executor = await resolveFlowToolExecutor({ organizationId: flow.organizationId, userId, plane, ref, toolName, args })
-  // Never poll a WRITE tool — polling calls the tool every tick with no approval
-  // gate, so it must be read-only.
-  if (executor.isWrite) {
-    apiLogger.warn('runFlowPoll: refusing to poll a write tool', { flowId: flow.id, toolName })
+  // A poll that cannot run (a write tool, one held for approval, a connection
+  // that is gone, the server erroring) used to leave only a server log line, so
+  // a published flow just never fired and nobody could see why. The failure is
+  // now kept on the cursor where the builder reads it (pollFailure in poll.ts), and the
+  // check is stamped so it retries on its cadence rather than every tick. The
+  // seen keys are kept, so a transient failure doesn't turn into a re-baseline.
+  const recordFailure = async (message: string) => {
+    apiLogger.warn('runFlowPoll: poll failed', { flowId: flow.id, toolName, error: message })
+    await persistPollCursor(flow, {
+      ...(cursor ? { seen: cursor.seen } : {}),
+      lastPolledAt: now.toISOString(),
+      lastError: { message: message.slice(0, MAX_POLL_ERROR_LENGTH), at: now.toISOString() },
+    })
     return { dispatched: 0 }
   }
 
-  const result = flowToolOutput(await executor.execute(toolName, args))
+  let result: unknown
+  try {
+    result = await callPollTool(flow, trigger, connectionId, toolName, userId)
+  } catch (error) {
+    return recordFailure(error instanceof Error ? error.message : String(error))
+  }
+  if (result === WRITE_TOOL) {
+    return recordFailure(`${toolName} changes things, and a polling trigger only runs read actions — pick a read action (e.g. list or search) and publish again.`)
+  }
+
   const items = pageItems(result, typeof trigger.itemsPath === 'string' ? trigger.itemsPath : undefined)
-  const cursor = (flow.pollCursor && typeof flow.pollCursor === 'object' ? flow.pollCursor : undefined) as PollCursor | undefined
   const dedupeKeyField = String(trigger.dedupeKey || 'id')
   const { fresh, nextCursor } = newPollItems(items, dedupeKeyField, cursor)
 
@@ -103,11 +108,73 @@ export async function runFlowPoll(flow: PollFlow, userId: string, now: Date): Pr
     }
   }
 
-  await prisma.flow.update({
-    where: { id: flow.id, organizationId: flow.organizationId },
-    data: { pollCursor: { ...nextCursor, lastPolledAt: now.toISOString() } },
-  })
+  // Written without lastError: a successful check clears the failure notice.
+  await persistPollCursor(flow, { ...nextCursor, lastPolledAt: now.toISOString() })
   return { dispatched: trigger.emit === 'batch' ? (fresh.length ? 1 : 0) : fresh.length }
+}
+
+const MAX_POLL_ERROR_LENGTH = 500
+
+/**
+ * Store the cursor this poll computed — unless the flow's trigger was
+ * republished onto a different read while the poll ran. Publishing a new poll
+ * read drops the cursor (trigger-columns.ts) so it baselines; writing back the
+ * OLD read's seen keys after that would make the new read's every record look
+ * fresh. Guarded on the trigger the poll used; a trigger that moved on with the
+ * same read (a secret minted, a republish of other steps) still gets it.
+ */
+async function persistPollCursor(flow: PollFlow, pollCursor: Prisma.InputJsonValue) {
+  const where = { id: flow.id, organizationId: flow.organizationId }
+  const written = await prisma.flow.updateMany({
+    where: { ...where, trigger: { equals: (flow.trigger ?? {}) as Prisma.InputJsonValue } },
+    data: { pollCursor },
+  })
+  if (written.count) return
+  const current = await prisma.flow.findFirst({ where, select: { trigger: true } })
+  if (!current || pollIdentityChanged(flow.trigger, current.trigger)) return
+  await prisma.flow.updateMany({ where, data: { pollCursor } })
+}
+const WRITE_TOOL = Symbol('write tool')
+
+/** Call the trigger's read tool; WRITE_TOOL when it turns out to be a write. */
+async function callPollTool(
+  flow: PollFlow,
+  trigger: PollTrigger,
+  connectionId: string,
+  toolName: string,
+  userId: string,
+): Promise<unknown> {
+  let args: Record<string, unknown> = {}
+  if (typeof trigger.args === 'string') {
+    try {
+      args = prepareToolArgs(JSON.parse(trigger.args))
+    } catch {
+      args = {}
+    }
+  } else if (trigger.args && typeof trigger.args === 'object') {
+    args = prepareToolArgs(trigger.args)
+  }
+
+  const { plane, ref } = parseFlowToolConnectionId(connectionId)
+  // The args go in so a tool classified per call (a warehouse SELECT) can be
+  // polled while the same tool running a DELETE cannot. No `approval`: a poll
+  // cannot stop for a person, so a tool held for approval is refused (throws).
+  const executor = await resolveFlowToolExecutor({ organizationId: flow.organizationId, userId, plane, ref, toolName, args })
+  // Never poll a WRITE tool — polling calls the tool every tick with no approval
+  // gate, so it must be read-only.
+  if (executor.isWrite) return WRITE_TOOL
+  return flowToolOutput(await executor.execute(toolName, args))
+}
+
+/**
+ * The dedupe cursor off the stored JSON, or undefined (→ the next poll is a
+ * baseline). A row holding only a failure marker has no seen keys yet, and
+ * must baseline rather than treat every record as new.
+ */
+function storedPollCursor(raw: unknown): PollCursor | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const seen = (raw as { seen?: unknown }).seen
+  return Array.isArray(seen) ? { seen: seen.filter((key): key is string => typeof key === 'string') } : undefined
 }
 
 /** Read the last-polled timestamp off a stored cursor (for schedule cadence). */

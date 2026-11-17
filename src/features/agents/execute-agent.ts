@@ -844,6 +844,22 @@ async function runAgentExecutionInner(
     transcript = runner.start(data.input || agent.objective)
   }
 
+  // A queued run can be cancelled before a worker picks it up (the cancel
+  // route finalizes a `pending` row directly). Claim it atomically, so a
+  // cancel that lands after the read above is never overwritten to running.
+  if (queuedExecution && !resuming && !resumeFromCrash) {
+    // systemPrisma: id-keyed claim on worker job data; execution id was
+    // validated against this tenant when queuedExecution was loaded above.
+    const claimed = await systemPrisma.agentExecution.updateMany({
+      where: { id: queuedExecution.id, status: 'pending' },
+      data: { status: 'running' },
+    })
+    if (claimed.count === 0) {
+      const live = await prisma.agentExecution.findFirst({ where: { id: queuedExecution.id, organizationId }, select: { status: true } })
+      return { status: live?.status ?? 'cancelled', skipped: true as const }
+    }
+  }
+
   const execution = queuedExecution
     ? // systemPrisma: id-keyed terminal write on worker job data; execution id was
       // validated against this tenant when queuedExecution was loaded above.
@@ -951,7 +967,7 @@ async function runAgentExecutionInner(
         executionId: execution.id,
       })
     }
-    return { summary: cancelSummary, executionId: execution.id }
+    return { summary: cancelSummary, executionId: execution.id, status: 'cancelled' }
   }
 
   try {
@@ -2158,7 +2174,14 @@ async function runAgentExecutionInner(
       visibility: agent.visibility === 'private' ? 'private' : 'shared',
       recordSuggestionEvent: (payload) => recordEvent(execution.id, null, 'agent.suggestion', payload),
     }).catch(() => undefined)
-    return { ...output, executionId: execution.id }
+    // The terminal status rides back too: a flow's agent step must not read a
+    // `blocked` run (finished, but its delivery never happened) as succeeded.
+    return {
+      ...output,
+      executionId: execution.id,
+      status: blockedReason ? 'blocked' : 'completed',
+      ...(blockedReason ? { error: blockedReason } : {}),
+    }
   } catch (error) {
     // A cancelled run that then throws (e.g. the completion guard above
     // finalized it as cancelled but a later step in this same try block still

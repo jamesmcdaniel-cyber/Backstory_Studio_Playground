@@ -10,6 +10,15 @@
 import { systemPrisma } from '@/lib/prisma'
 import { NEVER_PICKED_UP_TIMEOUT_MS, NEVER_PICKED_UP_ERROR } from '@/lib/flows/run-stall'
 import { truncateWithMarker } from '@/lib/flows/truncate'
+import { onFlowRunsTerminalized } from '@/lib/flows/run-terminal-effects'
+
+/**
+ * What a `cancelling` run whose process died reads once the reaper resolves
+ * it. Cancellation is cooperative — the interpreter notices `cancelling` and
+ * finishes the job — so a run whose worker went away mid-cancel had nothing
+ * left to notice, and read "cancelling" forever.
+ */
+export const REAPED_CANCEL_MESSAGE = 'Cancelled (run did not stop in time)'
 
 // Dispatch/execute routes cap at maxDuration 1800s; 45 min = budget + slack.
 // The cutoff must exceed the route budget or the reaper kills runs that are
@@ -39,7 +48,8 @@ export function formatReapMessage(startedAt: Date, now: Date, lastCompletedStepN
 }
 
 /**
- * Fail runs stuck `running` past the cutoff (and their still-live steps).
+ * Fail runs stuck `running` past the cutoff (and their still-live steps), and
+ * resolve runs stuck `cancelling` to `cancelled` the same way.
  * Returns the reaped count.
  *
  * Each run is terminalized inside its OWN small interactive transaction —
@@ -80,8 +90,8 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
   const cutoff = new Date(now.getTime() - STUCK_FLOW_RUN_TIMEOUT_MS)
   // systemPrisma: global reaper sweep — runs across all orgs by design (invoked from CRON_SECRET-gated dispatch).
   const stuck = await systemPrisma.flowRun.findMany({
-    where: { status: 'running', startedAt: { lt: cutoff }, OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }] },
-    select: { id: true, startedAt: true },
+    where: { status: { in: ['running', 'cancelling'] }, startedAt: { lt: cutoff }, OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }] },
+    select: { id: true, startedAt: true, status: true },
     take: REAP_BATCH_LIMIT,
   })
   if (stuck.length === 0) return 0
@@ -100,8 +110,13 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
   for (const step of doneSteps) if (!lastStepByRun.has(step.flowRunId)) lastStepByRun.set(step.flowRunId, step.nodeId)
 
   let reapedCount = 0
+  const failedIds: string[] = []
+  const cancelledIds: string[] = []
   for (const run of stuck) {
-    const message = formatReapMessage(run.startedAt, now, lastStepByRun.get(run.id) ?? null)
+    // A user asked this one to stop: its intent stands, it just never got
+    // acknowledged. Everything else was running and is failed.
+    const cancelling = run.status === 'cancelling'
+    const message = cancelling ? REAPED_CANCEL_MESSAGE : formatReapMessage(run.startedAt, now, lastStepByRun.get(run.id) ?? null)
     // systemPrisma: global reaper sweep — runs across all orgs by design.
     // Per-run interactive transaction (see the doc comment above): the step
     // sweep must NOT run when the claim below matched 0 rows, which rules
@@ -109,18 +124,26 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
     // callback form instead.
     const reapedThisRun = await systemPrisma.$transaction(async (tx) => {
       const claimed = await tx.flowRun.updateMany({
-        where: { id: run.id, status: 'running', OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }] },
-        data: { status: 'failed', error: message, finishedAt: now },
+        where: { id: run.id, status: cancelling ? 'cancelling' : 'running', OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }] },
+        data: { status: cancelling ? 'cancelled' : 'failed', error: message, finishedAt: now },
       })
-      if (claimed.count === 0) return false // diverted away from `running` since the initial read
+      if (claimed.count === 0) return false // diverted away from its status since the initial read
       await tx.flowRunStep.updateMany({
         where: { flowRunId: run.id, status: { in: ['queued', 'running', 'waiting'] } },
-        data: { status: 'failed', error: message, finishedAt: now },
+        data: { status: cancelling ? 'cancelled' : 'failed', error: message, finishedAt: now },
       })
       return true
     })
-    if (reapedThisRun) reapedCount += 1
+    if (reapedThisRun) {
+      reapedCount += 1
+      ;(cancelling ? cancelledIds : failedIds).push(run.id)
+    }
   }
+  // After each run's own transaction has committed: what a run that ended out
+  // of band owes (approvals superseded, the flow.failed signal, the error
+  // workflow, a waiting parent woken). Best-effort, idempotent, capped.
+  await onFlowRunsTerminalized(failedIds, 'failed')
+  await onFlowRunsTerminalized(cancelledIds, 'cancelled')
   return reapedCount
 }
 
@@ -147,9 +170,11 @@ export async function reapNeverPickedUpRuns(now = new Date(), onAfterRead?: () =
   // `status` and `steps: none` re-checked at write time: a run the worker
   // picked up (or that settled) between read and write is spared. No step
   // cleanup needed — matching runs have no steps by definition.
-  const reaped = await systemPrisma.flowRun.updateMany({
+  const reaped = await systemPrisma.flowRun.updateManyAndReturn({
     where: { id: { in: stranded.map((run) => run.id) }, status: 'running', OR: [{ lastActiveAt: null }, { lastActiveAt: { lt: cutoff } }], steps: { none: {} } },
     data: { status: 'failed', error: NEVER_PICKED_UP_ERROR, finishedAt: now },
+    select: { id: true },
   })
-  return reaped.count
+  await onFlowRunsTerminalized(reaped.map((run) => run.id), 'failed')
+  return reaped.length
 }

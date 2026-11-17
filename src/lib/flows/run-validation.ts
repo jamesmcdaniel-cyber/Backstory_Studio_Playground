@@ -23,8 +23,22 @@ import type { flowGraphSchema } from '@/lib/flows/graph'
 type FlowGraph = ReturnType<typeof flowGraphSchema.parse>
 
 export interface RunValidationContext {
-  /** Full rows — the execution manifest is built from these, not from agentRefs. */
-  agents: { id: string; description: string; updatedAt: Date }[]
+  /**
+   * Full rows — the execution manifest is built from these, not from
+   * agentRefs. Carries the fields that define what the agent DOES (live and
+   * published), so the manifest can pin a config revision rather than the
+   * run-bumped `updatedAt`.
+   */
+  agents: {
+    id: string
+    description: string
+    objective: string
+    goal: string | null
+    context: unknown
+    schedule: unknown
+    metadata: unknown
+    publishedConfig: unknown
+  }[]
   /** The shape validateFlowGraph wants. */
   agentRefs: { id: string; title: string }[]
   toolCatalog: FlowToolCatalogConnection[]
@@ -66,7 +80,7 @@ export async function loadRunValidationContext(
   const [agents, toolCatalog, httpCredentials, credentialResolvers] = await Promise.all([
     agentIds.length ? prisma.agentTask.findMany({
       where: { organizationId: scope.organizationId, id: { in: agentIds }, status: 'ACTIVE', ...agentVisibilityScope(scope.userId) },
-      select: { id: true, description: true, updatedAt: true },
+      select: { id: true, description: true, objective: true, goal: true, context: true, schedule: true, metadata: true, publishedConfig: true },
     }) : Promise.resolve([]),
     connectionIds.length
       ? loadFlowToolCatalog(scope.organizationId, {

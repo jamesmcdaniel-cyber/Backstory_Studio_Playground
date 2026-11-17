@@ -11,6 +11,7 @@ import { parseFlowSettings } from '@/lib/flows/settings'
 import { flowGraphSchema } from '@/lib/flows/graph'
 import { jsonValue } from './run-step-persistence'
 import { settleRunApprovals } from './approval-settle'
+import { wakeSubflowParent } from '@/lib/flows/run-terminal-effects'
 import { createQueue, QUEUE_NAMES } from '@/lib/queue/config'
 import { inlineExecution } from '@/lib/queue/execution-mode'
 import type { FlowExecutionJob } from './execute-flow'
@@ -199,6 +200,19 @@ export async function finalizeFlowRun(
       apiLogger.error('flow approval resume failed', { flowRunId: run.id, error: error instanceof Error ? error.message : String(error) })
     })
   }
+  // A subflow child that settled (or paused somewhere new) on its own — an
+  // approval, timer or webhook resumed it directly — tells the parent paused
+  // on it. A no-op when the parent drove this run inline (it is `running`
+  // then, and reads the outcome itself).
+  await wakeSubflowParent({
+    organizationId: job.organizationId,
+    childRunId: run.id,
+    childTrigger: run.trigger,
+    childStatus: status,
+    childName: flow.name,
+  }).catch((error) => {
+    apiLogger.error('subflow parent wake failed', { flowRunId: run.id, error: error instanceof Error ? error.message : String(error) })
+  })
   if (resumeAt && !inlineExecution) {
     // Precise durable wakeup. The minute scanner remains crash recovery if
     // enqueue fails after the database commit. Both carry the same occurrence

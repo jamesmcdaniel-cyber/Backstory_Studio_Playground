@@ -5,8 +5,10 @@
  * "terminal" mean without duplicating the string lists.
  */
 
-/** A run the user can ask to stop: actively looping, or paused waiting on them. */
-const CANCELLABLE_STATUSES = new Set(['running', 'waiting_for_input', 'waiting_for_approval', 'waiting_for_external'])
+/** A run the user can ask to stop: queued, actively looping, or paused waiting
+ *  on them. A queued (`pending`) run is included: the activity pane disables
+ *  Run while one exists ("watch or stop it below"), so it must be stoppable. */
+const CANCELLABLE_STATUSES = new Set(['pending', 'running', 'waiting_for_input', 'waiting_for_approval', 'waiting_for_external'])
 
 /** Paused states with no live turn loop to notice a 'cancelling' flag — these
  *  finalize to 'cancelled' immediately instead of waiting for the loop. */

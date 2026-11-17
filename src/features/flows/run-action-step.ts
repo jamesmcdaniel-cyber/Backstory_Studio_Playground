@@ -17,7 +17,7 @@ import {
   jsonValue,
   persistedCodeStepInput,
   retryWarnings,
-  subflowChildQuestion,
+  subflowChildWaiting,
 } from './run-step-persistence'
 import { applySlackChainDepthMetadata, applySlackThreadDefault, prepareToolArgs } from './tool-args'
 import { flowToolOutput } from './tool-output'
@@ -40,7 +40,7 @@ import { flowSideEffectKey, withIdempotencyHeader } from '@/lib/flows/idempotenc
 import { trackDetached } from '@/lib/flows/keep-alive'
 import { parseFlowSettings, subflowCallerAllowed } from '@/lib/flows/settings'
 import { LEDGER_REPLAY_WARNING, readLedger, writeLedger } from '@/lib/flows/side-effect-ledger'
-import { subflowChildInput, subflowGuard } from '@/lib/flows/subflow'
+import { subflowChildInput, subflowGuard, subflowWaitingStatus } from '@/lib/flows/subflow'
 import { parseFlowToolConnectionId } from '@/lib/flows/tool-connection-id'
 import { truncateWithMarker } from '@/lib/flows/truncate'
 import { extractDocumentAuto, isSupported, type DocumentMetadata } from '@/lib/knowledge/extract'
@@ -576,6 +576,41 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
         // child's own resume machinery must surface, not re-run the child).
         const pausedChildRunId = node.resume ? pausedSubflowRunByNode.get(node.id) : undefined
         if (pausedChildRunId) {
+          // The child may have moved on without this parent: an approval
+          // decision, a timer, a webhook or an external agent resumes the
+          // CHILD directly, and its finish wakes this run (wakeSubflowParent).
+          // Read where it got to before forwarding anything — a child that
+          // already finished has an outcome to consume, and forwarding a reply
+          // into it would fail as "not waiting" and fail this step for nothing.
+          const childRun = await prisma.flowRun.findFirst({
+            where: { id: pausedChildRunId, organizationId: job.organizationId },
+            select: { status: true, output: true },
+          })
+          if (!childRun) {
+            const error = `"${child.name}"'s paused run no longer exists — re-run the flow.`
+            await finish({ status: 'failed', error })
+            return { error }
+          }
+          if (childRun.status === 'succeeded') {
+            await finish({ status: 'succeeded', output: childRun.output })
+            return { output: childRun.output }
+          }
+          if (childRun.status === 'failed' || childRun.status === 'cancelled') {
+            const error = childRun.status === 'cancelled'
+              ? `"${child.name}" was cancelled — open its run in Activity to see why.`
+              : `"${child.name}" failed — open its run in Activity to see why.`
+            await finish({ status: 'failed', error })
+            return { error }
+          }
+          // Still moving on its own (running), or a wake that raced the child
+          // pausing again: stay paused on the same child. Its next finish
+          // wakes this run again; a typed reply is only forwarded to a child
+          // that is actually waiting for one.
+          if (childRun.status !== 'waiting' || job.subflowWake) {
+            const wait = await subflowChildWaiting(pausedChildRunId, child.name)
+            await finish({ status: 'waiting', output: { waiting: { ...wait, childRunId: pausedChildRunId, childFlowId: child.id } } })
+            return { waiting: { status: subflowWaitingStatus(wait.kind), question: wait.question } }
+          }
           try {
             const resumed = await (await flowEngine()).runFlowExecution({
               flowId: child.id,
@@ -587,9 +622,9 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
               subflowDepth: (job.subflowDepth ?? 0) + 1,
             })
             if (resumed.status === 'waiting') {
-              const question = await subflowChildQuestion(pausedChildRunId, child.name)
-              await finish({ status: 'waiting', output: { waiting: { kind: 'input', question, childRunId: pausedChildRunId, childFlowId: child.id } } })
-              return { waiting: { status: 'waiting_for_input', question } }
+              const wait = await subflowChildWaiting(pausedChildRunId, child.name)
+              await finish({ status: 'waiting', output: { waiting: { ...wait, childRunId: pausedChildRunId, childFlowId: child.id } } })
+              return { waiting: { status: subflowWaitingStatus(wait.kind), question: wait.question } }
             }
             if (resumed.status !== 'succeeded') {
               const error = `"${child.name}" failed after your reply — open its run in Activity to see why.`
@@ -661,14 +696,16 @@ export function createRunActionStep(ctx: RunActionStepContext): RunActionFn {
         const subflowRetryWarnings = retryWarnings(subflowAttempts, subflowAttemptErrors)
         if (result.status === 'waiting') {
           // The child paused — suspend the PARENT too. The waiting row carries
-          // the child run id so a reply to the parent resumes the child.
-          const question = await subflowChildQuestion(result.flowRunId, child.name)
+          // the child run id so a reply to the parent resumes the child, and
+          // the child's REAL wait kind, so the parent offers a reply box only
+          // when the child is asking a person something.
+          const wait = await subflowChildWaiting(result.flowRunId, child.name)
           await finish({
             status: 'waiting',
-            output: { waiting: { kind: 'input', question, childRunId: result.flowRunId, childFlowId: child.id } },
+            output: { waiting: { ...wait, childRunId: result.flowRunId, childFlowId: child.id } },
             ...(subflowRetryWarnings.length ? { warnings: subflowRetryWarnings } : {}),
           })
-          return { waiting: { status: 'waiting_for_input', question } }
+          return { waiting: { status: subflowWaitingStatus(wait.kind), question: wait.question } }
         }
         if (result.status !== 'succeeded') {
           const error = `"${child.name}" failed — open its latest run in Activity to see why.`

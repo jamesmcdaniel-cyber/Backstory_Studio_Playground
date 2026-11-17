@@ -4,6 +4,8 @@ import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { agentVisibilityScope } from '@/lib/server/visibility'
 import { notify } from '@/lib/notifications/service'
 import { isCancellableRunStatus, isTerminalRunStatus, isWaitingRunStatus } from '@/lib/agents/run-status'
+import { onAgentRunTerminalized } from '@/lib/agents/run-terminal-effects'
+import { cancelFlowRun } from '@/lib/flows/cancel-run'
 
 export const runtime = 'nodejs'
 
@@ -42,10 +44,29 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
     throw new ApiError('Run is not cancellable', 409, 'NOT_CANCELLABLE')
   }
 
+  // A flow's agent step: the run belongs to the FLOW. Stopping only the agent
+  // would strand the flow run — waiting on a step that can never answer, or
+  // carrying on as if the step had succeeded. Stop the flow with it, under
+  // the flow's own visibility rule; a flow this person cannot see is not
+  // theirs to stop from here.
+  const flowStep = await prisma.flowRunStep.findFirst({
+    where: { agentExecutionId: run.id, status: { in: ['running', 'waiting'] }, run: { organizationId: auth.organizationId, status: { in: ['running', 'waiting'] } } },
+    orderBy: { startedAt: 'desc' },
+    select: { run: { select: { id: true, flowId: true, flow: { select: { visibility: true, userId: true } } } } },
+  })
+  if (flowStep) {
+    const flow = flowStep.run.flow
+    if ((flow?.visibility === 'private' && flow.userId !== auth.dbUser.id) || !auth.can('flow.run')) {
+      throw new ApiError('This run is a step of a flow — stop it from that flow’s Runs panel.', 409, 'FLOW_OWNED_RUN')
+    }
+  }
+
   // Waiting runs have no live turn loop to notice a flag — resume only happens
-  // via a user reply/approval decision, so finalize them directly. Running
-  // runs are flagged 'cancelling' for the turn loop to notice and exit cleanly.
-  const nextStatus = isWaitingRunStatus(run.status) ? 'cancelled' : 'cancelling'
+  // via a user reply/approval decision, so finalize them directly. A queued
+  // (`pending`) run has no loop YET: the executor only claims a row that is
+  // still pending, so cancelling it here means it never starts. Running runs
+  // are flagged 'cancelling' for the turn loop to notice and exit cleanly.
+  const nextStatus = isWaitingRunStatus(run.status) || run.status === 'pending' ? 'cancelled' : 'cancelling'
   const existingMetadata = run.metadata && typeof run.metadata === 'object' ? (run.metadata as Record<string, unknown>) : {}
   const data =
     nextStatus === 'cancelled'
@@ -69,6 +90,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   if (updated.count !== 1) {
     throw new ApiError('Run is not cancellable', 409, 'NOT_CANCELLABLE')
   }
+  // After this run's own write, so the flow's sweep finds it already
+  // cancelled and does not follow it up a second time.
+  if (flowStep) {
+    await cancelFlowRun({ organizationId: auth.organizationId, flowId: flowStep.run.flowId, flowRunId: flowStep.run.id })
+  }
 
   if (nextStatus === 'cancelled') {
     await prisma.workflowEvent.create({
@@ -85,6 +111,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       agentTaskId: agent.id,
       executionId: run.id,
     })
+    // Approvals the run left pending must not stay approvable (approving one
+    // would execute a write for a run that no longer exists); a Slack thread
+    // it was answering hears it stopped. The notification above is the
+    // owner's, so it is not sent twice.
+    await onAgentRunTerminalized({ executionId: run.id, status: 'cancelled' }, { skipNotify: true })
   }
 
   return { success: true, status: nextStatus }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { agentHasLiveRun, liveAgentIds } from '../run-status'
+import { agentHasLiveRun, isCancellableRunStatus, liveAgentIds } from '../run-status'
 
 const activity = (agentTaskId: string | null, status: string) => ({ agentTaskId, status })
 
@@ -36,4 +36,15 @@ test('liveAgentIds collects every agent with a live run, once', () => {
     activity(null, 'running'),
   ])
   assert.deepEqual([...ids].sort(), ['a1', 'a3'])
+})
+
+// A queued run disables the agent's Run button ("watch or stop it below"), so
+// it has to be stoppable — it used to be neither shown nor cancellable.
+test('a queued (pending) run is cancellable, like the other live states', () => {
+  for (const status of ['pending', 'running', 'waiting_for_input', 'waiting_for_approval', 'waiting_for_external']) {
+    assert.equal(isCancellableRunStatus(status), true, status)
+  }
+  for (const status of ['cancelling', 'completed', 'failed', 'blocked', 'cancelled']) {
+    assert.equal(isCancellableRunStatus(status), false, status)
+  }
 })

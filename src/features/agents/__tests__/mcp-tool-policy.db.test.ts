@@ -126,7 +126,12 @@ test('flow execution refuses a blocked tool by name, before any credential is us
 test('an approval queued before its tool was turned off does not execute it', { skip }, async () => {
   const conn = await seedConnection()
   const { createApproval, decideApproval } = await import('@/lib/agents/approval')
-  const executionId = `exec-${crypto.randomUUID()}`
+  // A real, still-paused run: decideApproval refuses an approval whose run
+  // has ended or no longer exists (its write would run for nobody).
+  const execution = await prisma.agentExecution.create({
+    data: { agentType: 'custom', input: { prompt: 'x' }, trigger: { type: 'manual' }, status: 'waiting_for_approval', userId: seeded.userId, organizationId: seeded.organizationId },
+  })
+  const executionId = execution.id
   const { id } = await createApproval({
     organizationId: seeded.organizationId, executionId, userId: seeded.userId,
     provider: planes.mcpConnectionSlug(conn.name), tool: 'update_record', args: { id: 1 }, mcpConnectionId: conn.id,

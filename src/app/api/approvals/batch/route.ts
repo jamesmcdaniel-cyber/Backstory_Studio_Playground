@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { withAuthenticatedApi } from '@/lib/server/api-handler'
-import { decideApproval, type DecideResult } from '@/lib/agents/approval'
+import { ApprovalDeliveryError, decideApproval, type DecideResult } from '@/lib/agents/approval'
 import { scheduleApprovalResume } from '../resume'
 
 const schema = z.object({
@@ -32,6 +32,11 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
       if (resume) resumes.set(`agent:${resume.executionId}`, { resume })
       if (resumeFlow) resumes.set(`flow:${resumeFlow.flowRunId}`, { resumeFlow })
     } catch (error) {
+      // A failed delivery still resumes the run paused on it (with the failure).
+      if (error instanceof ApprovalDeliveryError) {
+        if (error.resume) resumes.set(`agent:${error.resume.executionId}`, { resume: error.resume })
+        if (error.resumeFlow) resumes.set(`flow:${error.resumeFlow.flowRunId}`, { resumeFlow: error.resumeFlow })
+      }
       const message = error instanceof Error ? error.message : String(error)
       results.push(message === 'Approval not found' ? { id, status: 'not_found' } : { id, status: 'error', error: message.slice(0, 300) })
     }

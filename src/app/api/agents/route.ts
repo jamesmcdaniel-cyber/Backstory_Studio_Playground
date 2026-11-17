@@ -6,7 +6,7 @@ import type { AuthContext } from '@/lib/server/auth'
 import { configurableAgentScope as agentVisibilityScope, listableAgentScope } from '@/lib/server/visibility'
 import { readAgentMetadata } from '@/lib/agents/metadata'
 import { roleLabelInputsChanged } from '@/lib/agents/role-label'
-import { serializeAgent } from '@/lib/agents/serialize'
+import { canChangeAgentVisibility, serializeAgent } from '@/lib/agents/serialize'
 import { indexAgent, removeAgentFromGraph } from '@/lib/rag/indexer'
 import { syncAgentConnectors } from '@/lib/connectors/agent-connectors'
 import { AGENT_HTTP_ENDPOINT_LIMIT, agentHttpEndpointSchema } from '@/lib/integrations/http-endpoints'
@@ -181,7 +181,7 @@ export const GET = withAuthenticatedApi(async (_request, auth) => {
     // runaway number of agents must not turn every poll into a full scan.
     take: 300,
   })
-  return { success: true, agents: agents.map(serializeAgent) }
+  return { success: true, agents: agents.map((agent) => serializeAgent(agent, auth.dbUser.id)) }
 }, { permission: 'agent.read' })
 
 export const POST = withAuthenticatedApi(async (request, auth) => {
@@ -231,7 +231,7 @@ export const POST = withAuthenticatedApi(async (request, auth) => {
   // A new job on the roster changes what this avatar does overall.
   if (teammateId) await invalidateTeammateLabels([teammateId], auth.organizationId)
   void indexAgentRow(agent)
-  return { success: true, agent: serializeAgent(agent) }
+  return { success: true, agent: serializeAgent(agent, auth.dbUser.id) }
 }, { permission: 'agent.write' })
 
 export const PUT = withAuthenticatedApi(async (request, auth) => {
@@ -240,6 +240,11 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     where: { id: body.id, organizationId: auth.organizationId, ...agentVisibilityScope(auth.dbUser.id) },
   })
   if (!existing) throw new ApiError('Agent not found', 404, 'NOT_FOUND')
+  // Who sees the agent is its creator's call. Only an actual change is refused:
+  // the config form sends its whole draft, visibility included, on every save.
+  if (body.visibility !== undefined && body.visibility !== existing.visibility && !canChangeAgentVisibility(existing, auth.dbUser.id)) {
+    throw new ApiError('Only the person who created this agent can change who can see it.', 403, 'AGENT_OWNER_REQUIRED')
+  }
   const teammateId = body.teammateId ? await assertTeammateInOrg(body.teammateId, auth.organizationId) : null
   const metadata = existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata) ? existing.metadata : {}
   const typedMetadata = readAgentMetadata(existing.metadata)
@@ -305,7 +310,7 @@ export const PUT = withAuthenticatedApi(async (request, auth) => {
     await invalidateTeammateLabels(affected, auth.organizationId)
   }
   void indexAgentRow(agent)
-  return { success: true, agent: serializeAgent(agent) }
+  return { success: true, agent: serializeAgent(agent, auth.dbUser.id) }
 }, { permission: 'agent.write' })
 
 export const DELETE = withAuthenticatedApi(async (request, auth) => {

@@ -86,6 +86,12 @@ export function HttpStepFields({
     ready: boolean
   }
   const [credentialResolvers, setCredentialResolvers] = useState<CredentialResolverSummary[]>([])
+  // Whether THIS viewer may create a shared per-user resolver (an integration
+  // admin) — served by GET /api/credential-resolvers, the route that enforces it.
+  const [canCreateResolver, setCanCreateResolver] = useState(false)
+  // The bindable list has arrived: until then a selected credential missing
+  // from it is just loading, not someone else's.
+  const [credentialsLoaded, setCredentialsLoaded] = useState(false)
   const [credentialDialogOpen, setCredentialDialogOpen] = useState(false)
   const [newCredentialType, setNewCredentialType] = useState<HttpAuthOption>('basic')
   const [curlDialogOpen, setCurlDialogOpen] = useState(false)
@@ -118,8 +124,12 @@ export function HttpStepFields({
       fetch('/api/credential-resolvers', { cache: 'no-store' }).then((response) => response.json()),
     ])
       .then(([credentialData, resolverData]) => {
-        if (credentialData?.success && Array.isArray(credentialData.credentials)) setHttpCredentials(credentialData.credentials)
+        if (credentialData?.success && Array.isArray(credentialData.credentials)) {
+          setHttpCredentials(credentialData.credentials)
+          setCredentialsLoaded(true)
+        }
         if (resolverData?.success && Array.isArray(resolverData.resolvers)) setCredentialResolvers(resolverData.resolvers)
+        setCanCreateResolver(resolverData?.canCreate === true)
       })
       .catch(() => undefined)
   }, [])
@@ -336,7 +346,17 @@ export function HttpStepFields({
             </div>
             {node.data.credentialId && (() => {
               const selected = httpCredentials.find((entry) => entry.id === node.data.credentialId)
-              const flagged = selected?.status === 'error'
+              // Bound to a credential this viewer can't bind (a teammate's own):
+              // nothing about it is ours to vouch for or re-verify.
+              if (!selected) {
+                return credentialsLoaded ? (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    This step uses a credential that belongs to someone else. Only its owner can re-verify or change it —
+                    choose one of yours above to replace it.
+                  </p>
+                ) : null
+              }
+              const flagged = selected.status === 'error'
               return (
                 <div className="mt-1.5 space-y-1">
                   <div className="flex items-center justify-between gap-2">
@@ -346,6 +366,9 @@ export function HttpStepFields({
                         ? 'This credential was rejected on a recent run.'
                         : 'Verified credential — secrets are encrypted and excluded from the flow.'}
                     </p>
+                    {/* Re-verifying is the owner's (or an integration admin's) —
+                        the PATCH refuses anyone else. */}
+                    {selected.canManage && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -378,11 +401,12 @@ export function HttpStepFields({
                     >
                       {reverifyingCredential ? 'Verifying…' : 'Re-verify'}
                     </Button>
+                    )}
                   </div>
-                  {flagged && selected?.lastError && (
+                  {flagged && selected.lastError && (
                     <p className="text-xs text-amber-700/80">{selected.lastError}</p>
                   )}
-                  {selected && !selected.isSharedLegacy && (
+                  {canCreateResolver && !selected.isSharedLegacy && (
                     <Button
                       type="button"
                       variant="ghost"
@@ -507,7 +531,9 @@ export function HttpStepFields({
             })()}
             {credentialResolvers.length === 0 && (
               <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-                No shared resolver exists yet. Select one of your credentials and choose “Make per-user” below.
+                {canCreateResolver
+                  ? 'No shared resolver exists yet. Select one of your credentials and choose “Make per-user” below.'
+                  : 'No shared resolver exists yet. Ask a workspace admin to make one of the workspace’s credentials per-user.'}
               </p>
             )}
           </div>

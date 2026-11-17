@@ -219,6 +219,7 @@ export function AssistantPanel({
   runOutput,
   onAgentUpdated,
   onOpenAgent,
+  composerBlocked = null,
 }: {
   agent: Agent | null
   hasFailedRun?: boolean
@@ -227,6 +228,9 @@ export function AssistantPanel({
   onAgentUpdated: () => void
   /** Select another agent — used to jump to one a proposal just created. */
   onOpenAgent?: (agentId: string) => void
+  /** Why this viewer can't message the agent (the chat route would refuse),
+   *  shown in place of a composer that only errors. Null = open. */
+  composerBlocked?: string | null
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -346,7 +350,7 @@ export function AssistantPanel({
 
   const send = async (preset?: string) => {
     const content = (preset ?? input).trim()
-    if (!agentId || !content || sending) return
+    if (!agentId || !content || sending || composerBlocked) return
     const targetAgentId = agentId
     setInput('')
     setSending(true)
@@ -465,7 +469,7 @@ export function AssistantPanel({
   // Task-oriented starters that reflect what these agents do (run it, research,
   // briefing) plus quick config — not just "what did the last run do". An
   // external agent has no configuration to talk about: the message is the task.
-  const suggestions: Array<{ text: string; kind: 'action' | 'question' }> = agent && !external
+  const suggestions: Array<{ text: string; kind: 'action' | 'question' }> = agent && !external && !composerBlocked
     ? [
         { text: 'Run this agent now', kind: 'action' },
         { text: 'Change the schedule to run daily at 9am', kind: 'action' },
@@ -689,8 +693,13 @@ export function AssistantPanel({
       </div>
 
       <div className="border-t p-4">
+        {composerBlocked && (
+          <p className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="note">
+            {composerBlocked}
+          </p>
+        )}
         {/* No model of ours answers an external agent's thread. */}
-        {!external && (
+        {!external && !composerBlocked && (
           <div className="mb-2 flex justify-end">
             <ModelPicker value={model} onChange={setModel} disabled={sending} />
           </div>
@@ -711,7 +720,7 @@ export function AssistantPanel({
               }
             }}
             placeholder={agent ? (external ? `Send ${agent.title} a task…` : `Ask about ${agent.title}...`) : 'Select an agent to start chatting…'}
-            disabled={!agent || sending}
+            disabled={!agent || sending || Boolean(composerBlocked)}
             aria-label="Message the assistant"
             className="min-h-9 w-full flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-colors duration-fast placeholder:text-muted-foreground hover:border-graphite-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           />
@@ -720,7 +729,7 @@ export function AssistantPanel({
               <Square className="h-3.5 w-3.5 fill-current" />
             </Button>
           ) : (
-            <Button size="icon" disabled={!agent || !input.trim()} onClick={() => send()} aria-label="Send message">
+            <Button size="icon" disabled={!agent || !input.trim() || Boolean(composerBlocked)} onClick={() => send()} aria-label="Send message">
               <Send className="h-4 w-4" />
             </Button>
           )}

@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { RecommendationsBar } from '@/components/onboarding/recommendations-bar'
 import { buildRoster, type CardStats } from '@/lib/agents/roster'
 import { mergeScopeSummaries, type AgentScopeSummary } from '@/lib/agents/scope-types'
+import { agentActions, type AgentViewerPermissions } from '@/lib/agents/viewer-gates'
 
 import type { Agent, Teammate } from '@/lib/types'
 
@@ -33,12 +34,15 @@ export function AgentsGallery({
   onOpenAgent,
   onEditAgent,
   onCreateAgent,
+  permissions,
 }: {
   agents: Agent[]
   loading: boolean
   onOpenAgent: (id: string) => void
   onEditAgent: (id: string) => void
   onCreateAgent: () => void
+  /** The viewer's agent permissions: only what the routes will allow is offered. */
+  permissions: AgentViewerPermissions
 }) {
   const [kpis, setKpis] = useState<AgentKpis>({})
   // What each agent can do, compact — fetched after the roster paints (it
@@ -124,6 +128,17 @@ export function AgentsGallery({
   }, [fullRoster, labels, teammateLabels])
 
   const openCard = teammateCards.find((card) => card.teammate.id === openTeammateId) ?? null
+  const canConfigure = (agent: Agent) => agentActions(agent, permissions).configure
+  const addExternal = permissions.canManageApi && (
+    <Button variant="outline" onClick={() => setAddingExternal(true)}>
+      <Globe className="mr-1.5 h-4 w-4" aria-hidden="true" /> Add external agent
+    </Button>
+  )
+  const newAgent = permissions.canWrite && (
+    <Button onClick={onCreateAgent}>
+      <Plus className="mr-1.5 h-4 w-4" /> New agent
+    </Button>
+  )
   const total = fullRoster.teammateCards.length + fullRoster.agentCards.length
   const shown = teammateCards.length + agentCards.length
 
@@ -144,17 +159,18 @@ export function AgentsGallery({
       <div className="mx-auto w-full max-w-2xl p-6">
         <EmptyState
           icon={Users}
-          title="Hire your first agent"
-          description="Agents do real work — research accounts, draft reports, watch your pipeline. Create one and it shows up here."
+          title={permissions.canWrite ? 'Hire your first agent' : 'No agents yet'}
+          description={permissions.canWrite
+            ? 'Agents do real work — research accounts, draft reports, watch your pipeline. Create one and it shows up here.'
+            : 'Agents your workspace shares will show up here. Your role can view them; ask an admin if you need to create one.'}
         />
         <div className="mt-4 flex justify-center gap-2">
-          <Button variant="outline" onClick={() => setAddingExternal(true)}>
-            <Globe className="mr-1.5 h-4 w-4" aria-hidden="true" /> Add external agent
-          </Button>
-          <Button onClick={onCreateAgent}>
-            <Plus className="mr-1.5 h-4 w-4" /> New agent
-          </Button>
+          {addExternal}
+          {newAgent}
         </div>
+        {permissions.canWrite && !permissions.canManageApi && (
+          <p className="mt-3 text-center text-xs text-muted-foreground">Adding an external agent needs a workspace admin — ask one to register it.</p>
+        )}
         <ExternalAgentDialog open={addingExternal} onOpenChange={setAddingExternal} onRegistered={onExternalRegistered} />
       </div>
     )
@@ -197,12 +213,8 @@ export function AgentsGallery({
               </button>
             )}
           </div>
-          <Button variant="outline" onClick={() => setAddingExternal(true)}>
-            <Globe className="mr-1.5 h-4 w-4" aria-hidden="true" /> Add external agent
-          </Button>
-          <Button onClick={onCreateAgent}>
-            <Plus className="mr-1.5 h-4 w-4" /> New agent
-          </Button>
+          {addExternal}
+          {newAgent}
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -219,7 +231,7 @@ export function AgentsGallery({
             // One job means the avatar IS that agent — skip the roster panel
             // and behave exactly like a solo card.
             onOpen={() => (soleAgent ? onOpenAgent(soleAgent.id) : setOpenTeammateId(teammate.id))}
-            onConfigure={() => (soleAgent ? onEditAgent(soleAgent.id) : setOpenTeammateId(teammate.id))}
+            onConfigure={soleAgent && !canConfigure(soleAgent) ? undefined : () => (soleAgent ? onEditAgent(soleAgent.id) : setOpenTeammateId(teammate.id))}
             configureLabel={soleAgent ? `Configure ${soleAgent.title}` : `Manage ${teammate.name}`}
             scope={scopes ? mergeScopeSummaries(roster.map((job) => scopes[job.id]).filter(Boolean)) : null}
           />
@@ -234,14 +246,15 @@ export function AgentsGallery({
             stats={stats}
             presence={presence}
             onOpen={() => onOpenAgent(agent.id)}
-            onConfigure={() => onEditAgent(agent.id)}
+            onConfigure={canConfigure(agent) ? () => onEditAgent(agent.id) : undefined}
             configureLabel={`Configure ${agent.title}`}
+            openLabel={agent.templateCopyArtifactId ? `Open the artifact ${agent.title} works in` : undefined}
             scope={scopes ? scopes[agent.id] ?? null : null}
             external={agent.agentType === 'external'}
           />
         ))}
         {/* The create tile belongs to the roster, not to a filtered view of it. */}
-        {!query.trim() && (
+        {!query.trim() && permissions.canWrite && (
           <button
             type="button"
             onClick={onCreateAgent}
@@ -271,6 +284,7 @@ export function AgentsGallery({
           roleLabel={openCard.teammate.roleLabel || teammateLabels[openCard.teammate.id] || null}
           onOpenAgent={onOpenAgent}
           onEditAgent={onEditAgent}
+          canConfigure={canConfigure}
           onClose={() => setOpenTeammateId(null)}
           onChanged={loadTeammates}
         />

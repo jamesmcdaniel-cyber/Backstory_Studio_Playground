@@ -57,12 +57,12 @@ function hostedPage(html: string) {
   return { window, sent, errors, text, drawn, chart, filter, tab }
 }
 
-test('the hosted report offers the readout\'s fiscal years, quarters and roles', () => {
+test('the hosted report offers the readout\'s fiscal years and quarters, and no role filter', () => {
   const report = hostedReport()
   const ready = report.sent.find((message) => message.type === 'backstory:roi-ready') as unknown as { options: { fy: string[]; fq: string[]; role: string[] } }
   assert.equal(JSON.stringify(ready.options.fy), '["FY2026","FY2027"]', 'the readout\'s own fiscal years')
   assert.equal(JSON.stringify(ready.options.fq), '["Q1","Q2","Q3","Q4"]')
-  assert.ok(ready.options.role.includes('Account executives'))
+  assert.equal(ready.options.role.length, 0, 'the role filter was removed (2026-11-17)')
 })
 
 test('a fiscal year sets the summary\'s window: the scorecard compares that year with the one before', () => {
@@ -156,10 +156,59 @@ test('rep-level reports slice by the configured fiscal year (calendar years when
   assert.deepEqual(report.errors, [])
 })
 
-test('a role narrows the scorecard to that role\'s reps', () => {
+test('a role sent by an older host is ignored: the role filter is gone', () => {
   const report = hostedReport()
   const before = report.text('#scoreKpis')
   report.filter({ role: ['Account executives'] })
-  assert.notEqual(report.text('#scoreKpis'), before)
-  assert.match(report.text('#scoreWin'), /Account executives/)
+  assert.equal(report.text('#scoreKpis'), before)
+  assert.doesNotMatch(report.text('#scoreWin'), /Account executives/)
+  assert.equal(report.window.document.getElementById('gfRoleWrap'), null, 'the report\'s own panel has no Role group')
+})
+
+// James (2026-11-17): "they need to make changes to the pages based on the
+// filter criteria, I dont see that". The masthead and the six findings — the
+// first screen — were the written narrative and never moved.
+test('a fiscal period re-reads the headline, the lede and the findings; clearing restores the written ones', () => {
+  const report = hostedReport()
+  const written = { eyebrow: report.text('#mastEyebrow'), headline: report.text('#mastHeadline'), lede: report.text('#mastLede'), findings: report.text('#findings') }
+  report.filter({ fy: ['FY2026'] })
+  assert.match(report.text('#mastEyebrow'), /Key findings · FY2026 \(Aug 25 – Jan 26\)/)
+  assert.match(report.text('#mastHeadline'), /^In FY2026, /)
+  assert.notEqual(report.text('#mastLede'), written.lede)
+  assert.notEqual(report.text('#findings'), written.findings, 'the findings cards are recomputed')
+  assert.match(report.text('#findings'), /In FY2026, high-engagement deals win/)
+  const note = report.window.document.getElementById('periodNote')!
+  assert.equal(note.hidden, false)
+  assert.match(note.textContent ?? '', /Recomputed for FY2026/)
+
+  report.filter({ fy: ['FY2027'] })
+  const fy27 = report.text('#findings')
+  report.filter({ fy: ['FY2026'] })
+  assert.notEqual(report.text('#findings'), fy27, 'each fiscal year reads its own numbers')
+
+  report.filter({})
+  assert.equal(report.text('#mastEyebrow'), written.eyebrow)
+  assert.equal(report.text('#mastHeadline'), written.headline)
+  assert.equal(report.text('#mastLede'), written.lede)
+  assert.equal(report.text('#findings'), written.findings)
+  assert.equal(note.hidden, true)
+  assert.deepEqual(report.errors, [])
+})
+
+test('the recomputed headline agrees with the hero tiles it sits above', () => {
+  const report = hostedReport()
+  report.filter({ fy: ['FY2026'] })
+  const tiles = report.text('#heroStats')
+  const winRate = /([\d.]+%)Win rate, high-engagement deals/.exec(tiles)?.[1]
+  assert.ok(winRate, tiles)
+  assert.match(report.text('#mastLede'), new RegExp(`High-engagement deals win ${winRate.replace('.', '\\.')}`))
+})
+
+test('a quarter alone recomputes the first screen too', () => {
+  const report = hostedReport()
+  const written = report.text('#findings')
+  report.filter({ fq: ['Q2'] })
+  assert.match(report.text('#mastEyebrow'), /Key findings · FY2027 Q2/)
+  assert.notEqual(report.text('#findings'), written)
+  assert.deepEqual(report.errors, [])
 })

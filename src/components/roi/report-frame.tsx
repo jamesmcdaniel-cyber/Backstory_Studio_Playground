@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ARTIFACT_FRAME_SANDBOX } from '@/components/artifacts/stateful-artifact-frame'
 
-export type ReportFilters = { fy: string[]; fq: string[]; role: string[] }
-export const NO_FILTERS: ReportFilters = { fy: [], fq: [], role: [] }
+/** The report's filters: fiscal year and quarter. (Role was removed 2026-11-17.) */
+export type ReportFilters = { fy: string[]; fq: string[] }
+export const NO_FILTERS: ReportFilters = { fy: [], fq: [] }
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.length <= 60).slice(0, 40) : [])
 
@@ -42,7 +43,7 @@ export function RoiReportFrame({ artifactId, versionId, title, className, filter
         send({ type: 'backstory:roi-filters', filters: latest.current.filters })
         if (latest.current.tab && latest.current.tab !== 'summary') send({ type: 'backstory:roi-tab', tab: latest.current.tab })
       } else if (message?.type === 'backstory:roi-ready' && message.options) {
-        latest.current.onOptions({ fy: strings(message.options.fy), fq: strings(message.options.fq), role: strings(message.options.role) })
+        latest.current.onOptions({ fy: strings(message.options.fy), fq: strings(message.options.fq) })
       } else if (message?.type === 'backstory:roi-tab-shown' && typeof message.tab === 'string' && message.tab.length <= 20) {
         latest.current.onTab(message.tab)
       }

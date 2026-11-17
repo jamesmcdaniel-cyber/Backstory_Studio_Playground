@@ -27,7 +27,7 @@ import { hasLiveData, liveFiscalYears, type RoiLiveAccount } from './live-accoun
  * fiscal year, year-over-year findings, and the account-level view. Stage and
  * persona: the stage × persona heatmap, win rate by stage, persona lines,
  * survivorship and committee breadth. Account engagement: the Account 360
- * cohorts (when those extracts are loaded). Fiscal year, quarter and role
+ * cohorts (when those extracts are loaded). Fiscal year and quarter
  * filters sit in a side panel behind a menu button — the ROI page hosts them
  * in its own panel instead (see RoiReportFrame).
  *
@@ -43,7 +43,7 @@ import { hasLiveData, liveFiscalYears, type RoiLiveAccount } from './live-accoun
  * the layout changes: a person's page re-draws an account from its own state
  * the next time they open it, so saved pages take the new layout.
  */
-export const ROI_RENDER_VERSION = 6
+export const ROI_RENDER_VERSION = 7
 
 export type RoiDashboardOptions = {
   account: string
@@ -262,9 +262,9 @@ ${customStyle(view)}
     </div>
     <div class="mast-grid">
       <div>
-        <div class="eyebrow">${escapeHtml(eyebrow)}</div>
-        <h1${headlineClass}>${escapeHtml(normalized.headline)}</h1>
-        <p class="lede">${inline(normalized.lede)}</p>
+        <div class="eyebrow" id="mastEyebrow">${escapeHtml(eyebrow)}</div>
+        <h1${headlineClass} id="mastHeadline">${escapeHtml(normalized.headline)}</h1>
+        <p class="lede" id="mastLede">${inline(normalized.lede)}</p>
       </div>
       <figure class="strip-wrap" data-section="hero">
         <div id="heroStrip" role="img" aria-label="Headline chart"></div>
@@ -292,10 +292,9 @@ ${customStyle(view)}
 <div class="scrim" id="filterScrim" hidden></div>
 <aside class="filter-panel" id="filterPanel" aria-label="Filters" hidden>
   <div class="fp-head"><h2>Filters</h2><button type="button" class="fp-close" id="filtersClose" aria-label="Close filters">×</button></div>
-  <p class="fp-hint">Fiscal year and quarter set the period every view reads: deals closed in it, and activity in it against the same months a year earlier. Role narrows the reps behind the activity and adoption views.</p>
+  <p class="fp-hint">Fiscal year and quarter set the period every view reads — the headline, the findings, the scorecard and every tab: deals closed in it, and activity in it against the same months a year earlier.</p>
   <div class="fp-group" id="gfFyWrap"><h3>Fiscal year</h3><div class="chips" id="gfFy"></div></div>
   <div class="fp-group" id="gfFqWrap"><h3>Quarter</h3><div class="chips" id="gfFq"></div></div>
-  <div class="fp-group" id="gfRoleWrap"><h3>Role</h3><div class="chips" id="gfRole"></div></div>
   <button type="button" class="gf-clear" id="gfClear">Clear filters</button>
 </aside>
 
@@ -304,8 +303,9 @@ ${customStyle(view)}
   ${context ? `<div class="ctx" data-section="context"><div class="eyebrow">Account context · Backstory</div><p>${inline(context.summary)}</p>${context.facts.length ? `<dl>${context.facts.map((fact) => `<div><dt>${escapeHtml(fact.label)}</dt><dd>${escapeHtml(fact.value)}<small>${escapeHtml(fact.source || 'Backstory')}</small></dd></div>`).join('')}</dl>` : ''}</div>` : ''}
   ${liveSection(options.live, account, config.fiscalYearStartMonth ?? null)}
   <div class="section-lbl">What the data shows</div>
-  <h2>The ROI story in ${findingsWord} numbers</h2>
+  <h2 id="findingsTitle">The ROI story in ${findingsWord} numbers</h2>
   <p class="intro">Each figure is traceable to a view in this readout. The chain runs from product usage, to rep behaviour, to deal engagement, to outcomes.</p>
+  <div class="notice" id="periodNote" hidden></div>
 ${customSections(view, 'summary', 'start')}
   <div class="fgrid" id="findings" data-section="findings"></div>
   <div data-section="scorecard" id="scoreBlock">

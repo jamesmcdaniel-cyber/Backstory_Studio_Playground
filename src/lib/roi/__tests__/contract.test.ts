@@ -75,14 +75,14 @@ test('window averages: per-rep mean across months, then across reps', () => {
 test('renders the value readout with narrative slots, hiding sections without data', () => {
   const html = renderRoiDashboard(facts, narrative, { account: 'Iron Mountain', generatedAt: '2026-09-29T12:00:00.000Z', timeframePreset: 'last6_vs_year_ago', reason: 'Renewal' })
   assert.match(html, /<title>Backstory value readout · Iron Mountain<\/title>/)
-  assert.match(html, /<h1>Engaged deals win twice as often/)
+  assert.match(html, /<h1 id="mastHeadline">Engaged deals win twice as often/)
   assert.match(html, /src="\/vendor\/plotly\.min\.js"/)
   for (const tab of ['summary', 'activity', 'adoption', 'deals', 'stage', 'accounts', 'method']) assert.match(html, new RegExp(`data-tab="${tab}"`))
   assert.match(html, /id="filtersBtn"/) // the filters live behind the menu, not in a bar
   assert.match(html, /Key findings · [^<]*for Renewal/)
   assert.match(html, /No usage cohort file was provided/)
   assert.match(html, /const CFG = \{[^\n]*"comparison":"year_ago"/)
-  assert.match(html, /<p class="lede">Win rate climbs to <b class="num">48%<\/b>/) // **bold** in narrative becomes a number span
+  assert.match(html, /<p class="lede" id="mastLede">Win rate climbs to <b class="num">48%<\/b>/) // **bold** in narrative becomes a number span
 })
 
 test('a narrative written for the Iron Mountain layout points its findings at the value readout\'s tabs', () => {
@@ -123,7 +123,7 @@ test('embedded JSON and narrative cannot break out of the page', () => {
   const hostile: RoiNarrative = { ...narrative, headline: 'Acme</script><script>alert(1)</script> wins' }
   const html = renderRoiDashboard(facts, hostile, { account: 'Acme</title><script>x</script>' })
   assert.doesNotMatch(html, /const N = [^\n]*<\/script><script>alert/)
-  assert.match(html, /<h1>Acme&lt;\/script&gt;/)
+  assert.match(html, /<h1 id="mastHeadline">Acme&lt;\/script&gt;/)
   assert.match(html, /<title>Backstory value readout · Acme&lt;\/title&gt;/)
 })
 

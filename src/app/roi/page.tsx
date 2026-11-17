@@ -329,7 +329,7 @@ export default function RoiPage() {
   const busy = Boolean(trackedRun && !isRunSettled(trackedRun.phase)) || Boolean(selected?.activeAnalysisId && !unseenRuns.has(selected.activeAnalysisId))
   const shownSettings = selected?.mine ?? selected?.report ?? null
   const configLine = shownSettings ? [...describeRunConfig(shownSettings.config), ...(shownSettings.reason ? [`for ${shownSettings.reason}`] : [])] : []
-  const filterCount = filters.fy.length + filters.fq.length + filters.role.length
+  const filterCount = filters.fy.length + filters.fq.length
   const showing = bound && same(bound.account, account) ? bound : null
 
   if (setupError && !setup) {
@@ -357,7 +357,7 @@ export default function RoiPage() {
             From lg they fill the space between the button and the actions, wrapping there rather than taking a row of their own. */}
         {(filterCount > 0 || configLine.length > 0) && (
           <ul aria-label="Active filters" className="flex min-h-8 min-w-0 basis-full flex-wrap content-center items-center gap-1.5 lg:flex-1 lg:basis-0">
-            {(['fy', 'fq', 'role'] as const).flatMap((group) => filters[group].map((value) => (
+            {(['fy', 'fq'] as const).flatMap((group) => filters[group].map((value) => (
               <li key={`${group}:${value}`}>
                 <span className="inline-flex items-center gap-1 rounded-full border border-horizon-300 bg-horizon-100 py-0.5 pl-2.5 pr-1 text-xs font-medium text-horizon-900 dark:border-horizon-700 dark:bg-horizon-900/50 dark:text-horizon-100">
                   {value}

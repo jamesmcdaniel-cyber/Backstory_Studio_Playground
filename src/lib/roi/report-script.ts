@@ -72,7 +72,8 @@ function setupGF(){
   var months=MON.concat(D?D.months:(HAS.cells?(ST.cellMonths||[]):[]));
   OPTIONS.fy=AG?AG.fys.slice():uniq(months.map(function(m){return fp(m).fy;})).sort();
   OPTIONS.fq=OPTIONS.fy.length?['Q1','Q2','Q3','Q4']:[];
-  OPTIONS.role=AG?ROLE_ORDER.filter(function(r){return AG.roster.some(function(u){return u.r===r;});}):U?ROLE_ORDER.filter(function(r){return U.users.some(function(u){return u.r&&(u.r||'Other')===r;});}):[];
+  /* No role filter (removed 2026-11-17): the period filters are the report's only filters. */
+  OPTIONS.role=[];
   drawChips();
   $('#gfClear').onclick=function(){GF.fy=[];GF.fq=[];GF.role=[];drawChips();gfChanged(true);};
   var open=function(on){$('#filterPanel').hidden=!on;$('#filterScrim').hidden=!on;$('#filtersBtn').setAttribute('aria-expanded',on);if(on)$('#filtersClose').focus();else $('#filtersBtn').focus();};
@@ -80,18 +81,18 @@ function setupGF(){
   $('#filtersClose').onclick=function(){open(false);};
   $('#filterScrim').onclick=function(){open(false);};
   document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!$('#filterPanel').hidden)open(false);});
-  if(!OPTIONS.fy.length&&!OPTIONS.role.length)$('#filtersBtn').classList.add('hidden');
+  if(!OPTIONS.fy.length)$('#filtersBtn').classList.add('hidden');
 }
 function drawChips(){
   if(!chipGroup('#gfFy',OPTIONS.fy,'fy'))$('#gfFyWrap').classList.add('hidden');
   if(!chipGroup('#gfFq',OPTIONS.fq,'fq'))$('#gfFqWrap').classList.add('hidden');
-  if(!chipGroup('#gfRole',OPTIONS.role,'role'))$('#gfRoleWrap').classList.add('hidden');
 }
 function gfChanged(fromPanel){var parts=[].concat(GF.fy,GF.fq,GF.role);
   var b=$('#gfBadge');b.textContent=parts.length?'Filtered: '+parts.join(' · '):'';b.style.display=parts.length?'inline-block':'none';
   if(fromPanel&&HOSTED)post({type:'backstory:roi-filters-changed',filters:GF});
   $$('tr[data-fy]').forEach(function(r){r.hidden=GF.fy.length>0&&GF.fy.indexOf(r.getAttribute('data-fy'))<0;});
   if(!AG)rosterRows=null;
+  renderMasthead();renderSummary();
   if(window.Plotly){renderHero();renderHeroStats();}
   rerender();}
 /* The ROI page hosts this report: its own side panel holds the filters, and
@@ -102,7 +103,7 @@ function post(msg){try{if(window.parent&&window.parent!==window)window.parent.po
 window.addEventListener('message',function(e){
   if(e.source!==window.parent||window.parent===window)return;var m=e.data||{};
   if(m.type==='backstory:roi-host'){HOSTED=true;document.body.classList.add('hosted');post({type:'backstory:roi-ready',options:OPTIONS,filters:GF});}
-  if(m.type==='backstory:roi-filters'&&m.filters){var f=m.filters;['fy','fq','role'].forEach(function(k){GF[k]=Array.isArray(f[k])?f[k].filter(function(v){return OPTIONS[k].indexOf(v)>=0;}):[];});drawChips();gfChanged(false);}
+  if(m.type==='backstory:roi-filters'&&m.filters){var f=m.filters;['fy','fq'].forEach(function(k){GF[k]=Array.isArray(f[k])?f[k].filter(function(v){return OPTIONS[k].indexOf(v)>=0;}):[];});GF.role=[];drawChips();gfChanged(false);}
   if(m.type==='backstory:roi-tab'&&typeof m.tab==='string')showTab(m.tab);
 });
 
@@ -412,8 +413,56 @@ function renderHeroStats(){
 
 /* ---------- executive summary ---------- */
 var TAB_TAG={activity:'Activity trends',adoption:'Adoption impact',deals:'Deal engagement',stage:'Stage and persona',accounts:'Account engagement'};
+/* The masthead and the findings under a fiscal period. The written headline,
+   lede and findings describe the configured window, so with a fiscal-year or
+   quarter filter set they are re-read from the data over that period: the
+   same quantities the written ones state (readout-import.ts
+   readoutNarrative), from the same math the views draw. Clearing the filter
+   restores the written ones. */
+var MAST=null,FT0=null;
+function stageWrNow(){
+  if(AG){if(GF.fq.length&&!GF.fy.length)return null;return aggStageWr().map(function(a){return {stage:a.stage,wr:a.wr,n:a.n};});}
+  if(HAS.cells){var S=aggCells(cellsOK()),names=stageNames();return names.map(function(nm,i){var a=S[i],n=a.won+a.lost;return {stage:nm,wr:n?a.won/n*100:null,n:n};});}
+  return null;}
+function periodStory(p){
+  var out={findings:[],lift:null,pipeRatio:null,hiWr:null,loWr:null,days:null,meetRatio:null,hp:null},g=defaultDeals(),hi=lvl(g,'High'),lo=lvl(g,'Low'),ow=p.obs,bw=p.base,where='In '+p.name+', ';
+  if(hi&&hi.win_rate!=null){out.hiWr=hi.win_rate;out.loWr=lo?lo.win_rate:null;out.lift=lo&&lo.win_rate?hi.win_rate/lo.win_rate:null;
+    out.findings.push({tab:'deals',fig:p1(hi.win_rate),cap:'win rate, high-engagement deals',h:'Engagement predicts the win',p:where+'high-engagement deals win **'+p1(hi.win_rate)+'**'+(out.lift?', **'+out.lift.toFixed(1)+'×** the **'+p1(lo.win_rate)+'** of low-engagement deals':lo&&lo.win_rate!=null?', against **'+p1(lo.win_rate)+'** for low-engagement deals':'')+', across '+n0(g.n)+' closed deals.'});}
+  var top=topCohort(),topName=top==='User'?'Backstory users':'High adopters',usage=HAS.U&&HAS.usage&&ow.length;
+  if(usage&&MK.indexOf('pipeline_created')>=0){var hp=winAvg(popMask(top),ow,['pipeline_created']).pipeline_created,np=winAvg(popMask('Non-user'),ow,['pipeline_created']).pipeline_created;
+    if(!isNaN(hp)){out.hp=hp;out.pipeRatio=!isNaN(np)&&np>0?hp/np:null;
+      out.findings.push({tab:'adoption',fig:money(hp),cap:'pipeline per '+(top==='User'?'Backstory user':'high adopter')+', per month',h:topName+' create the pipeline',p:where+topName.toLowerCase()+' create **'+money(hp)+'** of pipeline per rep per month'+(isNaN(np)?'.':'; non-users create **'+money(np)+'**.')});}}
+  if(HAS.U&&ow.length&&MK.indexOf('meeting_count')>=0){var all=popMask('all'),O=winAvg(all,ow),B=bw.length?winAvg(all,bw):null,ch=function(k){return B?pct(O[k],B[k]):NaN;};
+    var mc=ch('meeting_count'),vc=ch('vp_meeting_count'),ec=ch('executive_meeting_count');
+    out.findings.push({tab:'activity',fig:isNaN(O.meeting_count)?'–':O.meeting_count.toFixed(1),cap:'meetings per rep per month',h:!isNaN(vc)&&!isNaN(mc)&&vc>mc?'Senior meetings are holding up best':'Where the meetings went',
+      p:B?'Against the same months a year earlier, '+(MK.indexOf('vp_meeting_count')>=0?'VP meetings per rep are **'+sp(vc)+'**'+(MK.indexOf('executive_meeting_count')>=0?' and executive meetings **'+sp(ec)+'**':'')+', while ':'')+'meetings overall are **'+sp(mc)+'**.':'Reps averaged **'+(isNaN(O.meeting_count)?'–':O.meeting_count.toFixed(1))+'** meetings a month in '+p.name+'; the data has no earlier year to compare it with.'});}
+  if(hi&&lo){var hd=hi.avg_days!=null?hi.avg_days:hi.med_days_won,ld=lo.avg_days!=null?lo.avg_days:lo.med_days_won;
+    if(hd!=null&&ld!=null){hd=Math.round(hd);ld=Math.round(ld);out.days=ld-hd;
+      out.findings.push({tab:'deals',fig:Math.abs(ld-hd)+' days',cap:ld===hd?'difference in time to close, high vs low engagement':ld>hd?'faster to close, high vs low engagement':'slower to close, high vs low engagement',h:ld===hd?'Engagement does not change the pace':ld>hd?'Engaged deals close faster':'Engaged deals take longer',p:where+'high-engagement deals close in **'+hd+'** days'+(hi.avg_days!=null?' on average':' (median, won deals)')+', against **'+ld+'** for low engagement.'});}}
+  var W=stageWrNow();if(W){var pick=function(re){return W.filter(function(a){return re.test(a.stage)&&a.n>=5&&a.wr!=null;})[0];},neg=pick(/negotiat/i),disc=pick(/discover/i);
+    if(neg&&disc)out.findings.push({tab:'stage',fig:p1(neg.wr),cap:'win rate with activity at Negotiation',h:'Engagement late in the deal converts',p:where+'deals with activity at Negotiation win **'+p1(neg.wr)+'**, against **'+p1(disc.wr)+'** for deals with activity at Discovery.'});}
+  if(usage){var H=winAvg(popMask(top),ow,['meeting_count','vp_meeting_count']),Nn=winAvg(popMask('Non-user'),ow,['meeting_count','vp_meeting_count']),r=function(k){return Nn[k]>0&&!isNaN(H[k])?H[k]/Nn[k]:null;},mr=r('meeting_count'),vr=r('vp_meeting_count');
+    if(mr!=null){out.meetRatio=mr;out.findings.push({tab:'adoption',fig:mr.toFixed(1)+'×',cap:'meetings, '+topName.toLowerCase()+' vs non-users',h:topName+' out-engage non-users',p:where+topName.toLowerCase()+' hold **'+mr.toFixed(1)+'×** the meetings of non-users'+(vr!=null?' and **'+vr.toFixed(1)+'×** the VP meetings':'')+', per rep per month.'});}}
+  out.findings=out.findings.slice(0,6);return out;}
+function renderMasthead(){
+  var eb=$('#mastEyebrow'),h1=$('#mastHeadline'),lede=$('#mastLede');if(!eb||!h1||!lede)return;
+  if(!MAST)MAST={eb:eb.textContent,h1:h1.textContent,h1c:h1.className,lede:lede.innerHTML};
+  var p=periodWin();
+  if(!p){eb.textContent=MAST.eb;h1.textContent=MAST.h1;h1.className=MAST.h1c;lede.innerHTML=MAST.lede;return;}
+  var st=periodStory(p),who=topCohort()==='User'?'Backstory users':'high adopters',parts=[];
+  eb.textContent='Key findings · '+p.name+(p.obs.length?' ('+wl(p.obs)+')':'');
+  h1.className='';
+  h1.textContent=st.lift?'In '+p.name+', engaged deals win '+st.lift.toFixed(1)+'× as often'+(st.pipeRatio?', and '+who+' create '+st.pipeRatio.toFixed(1)+'× the pipeline.':'.'):st.hp!=null?'In '+p.name+', '+who+' create '+money(st.hp)+' of pipeline per rep per month.':(st.findings.length?'What '+p.name+' shows.':'Too little data in '+p.name+' to read.');
+  if(st.hiWr!=null)parts.push('High-engagement deals win **'+p1(st.hiWr)+'**'+(st.loWr!=null?' against **'+p1(st.loWr)+'** for low engagement':'')+(st.days>0?' and close **'+st.days+' days** faster':'')+'.');
+  if(st.meetRatio!=null)parts.push(who.charAt(0).toUpperCase()+who.slice(1)+' hold **'+st.meetRatio.toFixed(1)+'×** the meetings of non-users'+(st.hp!=null?' and create **'+money(st.hp)+'** of pipeline per rep per month':'')+'.');
+  lede.innerHTML=md(parts.length?parts.join(' '):'Fewer than 20 deals closed in this period and there is no activity to compare, so its figures are not read. Clear the filter or choose a wider period.');
+}
 function renderSummary(){
-  $('#findings').innerHTML=N.findings.map(function(f,i){var t=TABS[f.tab]?f.tab:null;
+  var p=periodWin(),list=N.findings,note=$('#periodNote');
+  if(p){var st=periodStory(p);if(st.findings.length)list=st.findings;}
+  if(note){note.hidden=!p;note.textContent=p?(list===N.findings?'Too little data in '+p.name+' to recompute these, so they cover the whole report. Clear the filter or choose a wider period.':'Recomputed for '+p.label+'. Clear the filter to read the analyst\'s written findings.'):'';}
+  var ft=$('#findingsTitle');if(ft){if(FT0==null)FT0=ft.textContent;ft.textContent=list===N.findings?FT0:'The ROI story in '+(['two','three','four','five','six'][list.length-2]||'four')+' numbers';}
+  $('#findings').innerHTML=list.map(function(f,i){var t=TABS[f.tab]?f.tab:null;
     return '<article class="fcard'+(t?' t-'+t:'')+'"><div class="ftag">'+esc(t?TAB_TAG[t]:'Finding '+(i+1))+'</div><div class="ffig">'+esc(f.fig)+'</div><div class="fcap">'+esc(f.cap)+'</div><h3>'+esc(f.h)+'</h3><p>'+md(f.p)+'</p>'+(t?'<button class="go" data-go="'+esc(t)+'" type="button">See the detail</button>':'')+'</article>';}).join('');
   $$('.go').forEach(function(b){b.onclick=function(){showTab(b.getAttribute('data-go'));window.scrollTo({top:$('nav.tabs').offsetTop,behavior:'smooth'});};});
   $('#watch').innerHTML=N.watch.map(function(w){return '<li><b>'+esc(w.lead)+'</b> '+md(w.text)+'</li>';}).join('');

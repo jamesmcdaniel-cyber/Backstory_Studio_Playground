@@ -77,8 +77,8 @@ function mount(props: Partial<React.ComponentProps<typeof SettingsPanel>> = {}) 
     setup: setupOf(),
     account: HP,
     onAccountChange: (name: string) => events.account.push(name),
-    filters: { fy: [], fq: [], role: [] },
-    filterOptions: { fy: ['FY2025', 'FY2026'], fq: ['Q1', 'Q2', 'Q3', 'Q4'], role: ['Account executives', 'Leadership'] },
+    filters: { fy: [], fq: [] },
+    filterOptions: { fy: ['FY2025', 'FY2026'], fq: ['Q1', 'Q2', 'Q3', 'Q4'] },
     onFiltersChange: (filters: unknown) => events.filters.push(filters),
     analyses,
     historyError: null,
@@ -194,13 +194,13 @@ test('invalid custom periods are flagged, and a submit focuses the first bad mon
 
 test('filters are compact chips with a count and a Clear beside the header', (t) => {
   t.after(cleanup)
-  const { events } = mount({ filters: { fy: ['FY2026'], fq: ['Q1', 'Q2'], role: [] } })
+  const { events } = mount({ filters: { fy: ['FY2026'], fq: ['Q1', 'Q2'] } })
   assert.match(section(/^Report filters/).textContent ?? '', /3 active filters/)
   assert.equal(screen.getByRole('button', { name: 'FY2026' }).getAttribute('aria-pressed'), 'true')
   fireEvent.click(screen.getByRole('button', { name: 'Q3' }))
-  assert.deepEqual(events.filters.at(-1), { fy: ['FY2026'], fq: ['Q1', 'Q2', 'Q3'], role: [] })
+  assert.deepEqual(events.filters.at(-1), { fy: ['FY2026'], fq: ['Q1', 'Q2', 'Q3'] })
   fireEvent.click(screen.getByRole('button', { name: 'Clear all report filters' }))
-  assert.deepEqual(events.filters.at(-1), { fy: [], fq: [], role: [] })
+  assert.deepEqual(events.filters.at(-1), { fy: [], fq: [] })
 })
 
 test('run history shows the account\'s runs first; a page version opens in place; All accounts keeps full names', (t) => {

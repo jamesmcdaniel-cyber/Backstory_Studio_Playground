@@ -41,7 +41,6 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([t
 const FILTER_GROUPS: Array<{ key: keyof ReportFilters; label: string }> = [
   { key: 'fy', label: 'Fiscal year' },
   { key: 'fq', label: 'Quarter' },
-  { key: 'role', label: 'Role' },
 ]
 
 const WINDOW_CHOICES: Array<{ value: RoiWindowChoice; label: string; srLabel: string; title: string }> = [
@@ -167,7 +166,7 @@ export function SettingsPanel({ open, onClose, setup, account, onAccountChange, 
 
   const hasPage = Boolean(account && (account.mine || account.report))
   const groups = FILTER_GROUPS.filter((group) => (filterOptions?.[group.key] ?? []).length > 0)
-  const activeFilters = [...filters.fy, ...filters.fq, ...filters.role]
+  const activeFilters = [...filters.fy, ...filters.fq]
   const defaults: Record<SectionId, boolean> = {
     filters: groups.length > 0,
     settings: false,
@@ -295,7 +294,7 @@ export function SettingsPanel({ open, onClose, setup, account, onAccountChange, 
               open={isOpen('filters')}
               onOpenChange={setOpen('filters')}
               actions={activeFilters.length > 0 ? (
-                <button type="button" onClick={() => onFiltersChange({ fy: [], fq: [], role: [] })} className={TEXT_BUTTON}>
+                <button type="button" onClick={() => onFiltersChange({ fy: [], fq: [] })} className={TEXT_BUTTON}>
                   Clear<span className="sr-only"> all report filters</span>
                 </button>
               ) : null}
@@ -569,7 +568,7 @@ function ReportFiltersBody({ groups, filters, filterOptions, onFiltersChange }: 
         </div>
       ))}
       <p className="pt-0.5 text-xs text-muted-foreground">
-        Applied as you choose them. Fiscal year and quarter set the period every view reads: deals closed in it, and activity in it against the same months a year earlier. Role narrows the reps behind the activity and adoption views.
+        Applied as you choose them. Fiscal year and quarter set the period the whole page reads — the headline, the findings, the scorecard and every tab: deals closed in it, and activity in it against the same months a year earlier.
       </p>
     </div>
   )

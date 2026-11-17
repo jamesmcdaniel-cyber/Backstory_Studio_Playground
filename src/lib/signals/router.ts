@@ -19,6 +19,8 @@ import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { indexSignal } from '@/lib/rag/indexer'
 import { runAgentExecution } from '@/features/agents/execute-agent'
 import { injectTraceContext } from '@/lib/observability/otel'
+import { resolveRunOwners } from '@/lib/scheduling/owners'
+import { runObjective } from '@/lib/agents/publish'
 
 interface SignalShape {
   id: string
@@ -102,11 +104,34 @@ export async function routeSignal(
 
   const subscriptions = await prisma.signalSubscription.findMany({
     where: { organizationId: signal.organizationId, signalType: signal.type, isActive: true },
-    include: { agentTask: { select: { id: true, status: true, objective: true, userId: true, organizationId: true, agentType: true, description: true, metadata: true } } },
+    include: {
+      agentTask: {
+        select: {
+          id: true, status: true, quarantinedAt: true, objective: true, publishedConfig: true, userId: true,
+          organizationId: true, agentType: true, description: true, metadata: true,
+        },
+      },
+    },
   })
 
+  // quarantinedAt: the owner was deprovisioned and the agent waits to be
+  // claimed. This router used to fire it anyway, as another member.
   const matches = subscriptions.filter(
-    (subscription) => subscription.agentTask?.status === 'ACTIVE' && matchesFilter(signal, subscription.filter),
+    (subscription) =>
+      subscription.agentTask?.status === 'ACTIVE' &&
+      !subscription.agentTask.quarantinedAt &&
+      matchesFilter(signal, subscription.filter),
+  )
+
+  // The scheduler's attribution rule (src/lib/scheduling/owners.ts), batched:
+  // a deprovisioned named owner stops the run instead of falling through to
+  // the org's oldest member, which is what the per-match lookup here did.
+  const owners = await resolveRunOwners(
+    matches.map((subscription) => ({
+      id: subscription.agentTask!.id,
+      organizationId: signal.organizationId,
+      userId: subscription.agentTask!.userId,
+    })),
   )
 
   let started = 0
@@ -114,18 +139,12 @@ export async function routeSignal(
 
   for (const subscription of matches) {
     const agent = subscription.agentTask!
-    // Attribute the run to the agent owner; fall back to the org's oldest
-    // active member (same policy as webhook triggers).
-    const owner = agent.userId
-      ? await prisma.user.findFirst({ where: { id: agent.userId, organizationId: signal.organizationId, isActive: true } })
-      : null
-    const user =
-      owner ||
-      (await prisma.user.findFirst({
-        where: { organizationId: signal.organizationId, isActive: true },
-        orderBy: { createdAt: 'asc' },
-      }))
-    if (!user) continue
+    const ownerId = owners.get(agent.id)
+    if (!ownerId) continue
+    const user = { id: ownerId }
+    // The PUBLISHED objective when there is one — the runtime seeds the run with
+    // this, so the draft's would override what was published.
+    const objective = runObjective(agent)
 
     let execution
     try {
@@ -137,7 +156,7 @@ export async function routeSignal(
           idempotencyKey: `${signal.id}:${agent.id}`,
           signalId: signal.id,
           input: {
-            prompt: agent.objective,
+            prompt: objective,
             signal: {
               id: signal.id,
               type: signal.type,
@@ -166,7 +185,7 @@ export async function routeSignal(
       agentId: agent.id,
       organizationId: signal.organizationId,
       userId: user.id,
-      input: agent.objective,
+      input: objective,
     })
     started++
   }

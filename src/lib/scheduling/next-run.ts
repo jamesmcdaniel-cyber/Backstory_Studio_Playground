@@ -117,7 +117,9 @@ export function isNotScheduled(nextRunAt: Date | null | undefined): boolean {
  * restamps it. Self-correcting in the safe direction, so it needs no hook.
  */
 const RECOMPUTE_TRIGGERS: Record<string, string[]> = {
-  AgentTask: ['schedule', 'lastExecutedAt', 'status', 'quarantinedAt'],
+  // publishedConfig: a published agent fires on its PUBLISHED schedule
+  // (runSchedule), so publishing is a schedule change like any other.
+  AgentTask: ['schedule', 'publishedConfig', 'lastExecutedAt', 'status', 'quarantinedAt'],
   Flow: ['trigger', 'status', 'publishedGraph', 'pollCursor', 'quarantinedAt'],
 }
 

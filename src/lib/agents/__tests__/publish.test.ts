@@ -6,6 +6,8 @@ import {
   hasUnpublishedChanges,
   pinnedConnectorKeys,
   publishedDefinition,
+  runObjective,
+  runSchedule,
   type PublishableAgent,
 } from '@/lib/agents/publish'
 
@@ -90,4 +92,33 @@ test('connector order is not a change', () => {
 test('key order inside context or metadata is not a change either', () => {
   const published = { ...agentDefinition(draft({ context: { a: 1, b: 2 } })) }
   assert.equal(hasUnpublishedChanges(draft({ context: { b: 2, a: 1 }, publishedConfig: published })), false)
+})
+
+/**
+ * The schedulers (registrar, dispatch tick) and the event triggers read these,
+ * not the runtime overlay — which is how a draft edit used to re-time a
+ * published agent and become its scheduled run's opening message.
+ */
+test('an unpublished agent schedules and starts from its live fields', () => {
+  const agent = draft({ schedule: { type: 'hourly', isActive: true } })
+  assert.deepEqual(runSchedule(agent), { type: 'hourly', isActive: true })
+  assert.equal(runObjective(agent), 'Watch renewals and brief the rep.')
+})
+
+test('a published agent schedules and starts from what was published, not the draft', () => {
+  const published = agentDefinition(draft({ objective: 'Published words.', schedule: { type: 'daily', time: '06:00', isActive: true } }))
+  const agent = draft({ objective: 'Draft words.', schedule: { type: 'hourly', isActive: true }, publishedConfig: published })
+  assert.deepEqual(runSchedule(agent), { type: 'daily', time: '06:00', isActive: true })
+  assert.equal(runObjective(agent), 'Published words.')
+})
+
+test('switching the live schedule off stops a published agent without a republish', () => {
+  // Stopping is never the dangerous direction; starting and re-timing are what
+  // publishing gates.
+  const published = agentDefinition(draft({ schedule: { type: 'daily', time: '06:00', isActive: true } }))
+  const agent = draft({ schedule: { type: 'daily', time: '06:00', isActive: false }, publishedConfig: published })
+  assert.deepEqual(runSchedule(agent), { type: 'daily', time: '06:00', isActive: false })
+
+  const switchedOn = draft({ schedule: { type: 'hourly', isActive: true }, publishedConfig: agentDefinition(draft({ schedule: { type: 'daily', isActive: false } })) })
+  assert.deepEqual(runSchedule(switchedOn), { type: 'daily', isActive: false }, 'switching ON is a draft change like any other')
 })

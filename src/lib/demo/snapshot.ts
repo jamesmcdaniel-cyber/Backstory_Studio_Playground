@@ -129,6 +129,44 @@ function anonRow<T extends Record<string, unknown>>(row: T, book: AliasBook): T 
   ) as T
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
+}
+
+/** A stored schedule ({ type, time, isActive, … }) switched off, anything else unchanged. */
+function disarmSchedule<T>(schedule: T): T {
+  return (isPlainRecord(schedule) ? { ...schedule, isActive: false } : schedule) as T
+}
+
+/**
+ * Disarm what a clone would otherwise fire on its own.
+ *
+ * Every clone copied its source's ARMED schedules, and a demo org's shadow
+ * members are active users — so each sandbox re-ran the real workspace's whole
+ * scheduled fleet (agents and scheduled/polling flows), with real model spend,
+ * for as long as the sandbox stood. The schedules are copied switched off
+ * rather than stripped, so the sandbox still shows what the real one runs and
+ * when; the registrar and the dispatch tick also skip demo orgs outright.
+ *
+ * An agent's PUBLISHED schedule is what the schedulers read for a published
+ * agent (lib/agents/publish.ts runSchedule), so it is disarmed too.
+ */
+export function disarmAgentSchedules<T extends { schedule?: unknown; publishedConfig?: unknown }>(agent: T): T {
+  const published = agent.publishedConfig
+  return {
+    ...agent,
+    schedule: disarmSchedule(agent.schedule),
+    publishedConfig: isPlainRecord(published) ? { ...published, schedule: disarmSchedule(published.schedule) } : published,
+  }
+}
+
+/** A flow's trigger with its schedule (schedule and poll triggers) switched off. */
+export function disarmFlowTrigger<T extends { trigger?: unknown }>(flow: T): T {
+  const trigger = flow.trigger
+  if (!isPlainRecord(trigger) || !isPlainRecord(trigger.schedule)) return flow
+  return { ...flow, trigger: { ...trigger, schedule: disarmSchedule(trigger.schedule) } }
+}
+
 export async function ensureDemoWorkspace(
   realOrgId: string,
   ownerUserId: string,
@@ -289,7 +327,7 @@ export async function ensureDemoWorkspace(
     agentIds.set(agent.id, id)
     await systemPrisma.agentTask.create({
       data: compact({
-        ...anonRow({ ...agent, id, organizationId: demoOrgId }, book),
+        ...disarmAgentSchedules(anonRow({ ...agent, id, organizationId: demoOrgId }, book)),
         userId: owner(agent.userId),
         teammateId: remap(teammateIds, agent.teammateId),
         // An external agent's endpoint is never copied (see EXCLUDED), so its
@@ -316,7 +354,7 @@ export async function ensureDemoWorkspace(
     flowIds.set(flow.id, id)
     await systemPrisma.flow.create({
       data: compact({
-        ...anonRow({ ...flow, id, organizationId: demoOrgId }, book),
+        ...disarmFlowTrigger(anonRow({ ...flow, id, organizationId: demoOrgId }, book)),
         userId: owner(flow.userId),
         shareTokenDigest: null,
         // A demo clone never inherits a live public link (and the digest is unique).

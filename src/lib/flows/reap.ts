@@ -124,6 +124,44 @@ export async function reapStuckFlowRuns(now = new Date(), onAfterRead?: () => Pr
   return reapedCount
 }
 
+export const OWNERLESS_WAIT_ERROR =
+  'Stopped: the person this run belongs to is no longer an active member of the workspace, so its wait cannot resume.'
+
+/**
+ * Fail timer-waiting runs that no one may resume.
+ *
+ * The tick's wait-resume pass reads the 50 due runs with the OLDEST resumeAt
+ * and skips any whose owner was deprovisioned. Skipping changed nothing about
+ * the row, so it stayed at the head of that ordering forever — fifty of them
+ * and every other workspace's timers stopped resuming. Terminalizing them
+ * (and clearing resumeAt) is what takes them out of the read for good, and it
+ * tells whoever looks at the run why it stopped.
+ *
+ * Per-run conditional transaction, like reapStuckFlowRuns: the claim re-checks
+ * `waiting` AND the resumeAt that was read, so a run resumed or rescheduled in
+ * between is left alone, and its steps are only swept when the claim matched.
+ */
+export async function failOwnerlessWaits(runs: Array<{ id: string; resumeAt: Date | null }>, now = new Date()): Promise<number> {
+  let failed = 0
+  for (const run of runs) {
+    // systemPrisma: global wait sweep across all orgs by design (CRON_SECRET-gated dispatch).
+    const settled = await systemPrisma.$transaction(async (tx) => {
+      const claimed = await tx.flowRun.updateMany({
+        where: { id: run.id, status: 'waiting', resumeAt: run.resumeAt },
+        data: { status: 'failed', error: OWNERLESS_WAIT_ERROR, finishedAt: now, resumeAt: null },
+      })
+      if (claimed.count === 0) return false
+      await tx.flowRunStep.updateMany({
+        where: { flowRunId: run.id, status: { in: ['queued', 'running', 'waiting'] } },
+        data: { status: 'failed', error: OWNERLESS_WAIT_ERROR, finishedAt: now },
+      })
+      return true
+    })
+    if (settled) failed += 1
+  }
+  return failed
+}
+
 /**
  * Fast path for the 2026-08-04 outage class: a run `running` with ZERO steps
  * past the pickup window was never consumed by the execution backend (a

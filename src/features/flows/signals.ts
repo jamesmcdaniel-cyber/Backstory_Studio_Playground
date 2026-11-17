@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { resolveRunOwner } from '@/lib/scheduling/owners'
 import { apiLogger } from '@/lib/logger'
 import { KNOWN_SIGNALS } from '@/lib/flows/trigger'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
@@ -72,8 +73,10 @@ export async function emitFlowSignal(params: {
     return { matched: 0 }
   }
 
+  // quarantinedAt: a deprovisioned owner's flow waits to be claimed; the
+  // schedule tick skipped it, and a signal used to fire it anyway.
   const flows = await prisma.flow.findMany({
-    where: { organizationId: params.organizationId, status: 'ACTIVE' },
+    where: { organizationId: params.organizationId, status: 'ACTIVE', quarantinedAt: null },
     take: MAX_FLOWS_PER_EMIT,
   })
   if (flows.length === MAX_FLOWS_PER_EMIT) {
@@ -97,17 +100,10 @@ export async function emitFlowSignal(params: {
       // Trigger-level filter: skip flows whose condition doesn't match this
       // payload before doing any further work (no owner lookup, no run row).
       if (!triggerConditionPasses(flow.trigger, params.payload)) continue
-      // Attribute the run to the flow owner when set; otherwise the org's
-      // oldest active member (shared/ownerless flows have no single owner) —
-      // mirrors the cron dispatcher's owner-attribution lookup.
-      const owner = flow.userId
-        ? await prisma.user.findFirst({
-            where: { id: flow.userId, organizationId: flow.organizationId, isActive: true },
-          })
-        : await prisma.user.findFirst({
-            where: { organizationId: flow.organizationId, isActive: true },
-            orderBy: { createdAt: 'asc' },
-          })
+      // The cron dispatcher's attribution rule itself (src/lib/scheduling/
+      // owners.ts), not a copy of it — the copy here had drifted.
+      const ownerId = await resolveRunOwner({ id: flow.id, organizationId: flow.organizationId, userId: flow.userId })
+      const owner = ownerId ? { id: ownerId } : null
       if (!owner) {
         apiLogger.warn('emitFlowSignal: no active user to attribute the run to, skipping flow', {
           flowId: flow.id,

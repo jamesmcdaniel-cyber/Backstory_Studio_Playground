@@ -20,6 +20,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma, systemPrisma } from '@/lib/prisma'
 import { apiLogger } from '@/lib/logger'
+import { resolveRunOwner } from '@/lib/scheduling/owners'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
 import { flowInputFromWebhookBody } from '@/lib/flows/input'
 import { startFlowExecution } from '@/features/flows/execute-flow'
@@ -204,6 +205,9 @@ export async function dispatchActivityEvent(activityEventId: string): Promise<Di
       organizationId: event.organizationId,
       status: 'ACTIVE',
       publishedGraph: { not: Prisma.AnyNull },
+      // A deprovisioned owner's flow waits to be claimed; the schedule tick
+      // skipped it, and an app event used to fire it anyway.
+      quarantinedAt: null,
       activitySource: event.source,
       activityKinds: { has: event.kind },
     },
@@ -324,11 +328,10 @@ export async function dispatchActivityEvent(activityEventId: string): Promise<Di
         continue
       }
 
-      // Owner-attribution ladder: flow.userId when active, else the org's
-      // oldest active member — identical to emitFlowSignal's lookup.
-      const owner = flow.userId
-        ? await prisma.user.findFirst({ where: { id: flow.userId, organizationId: flow.organizationId, isActive: true } })
-        : await prisma.user.findFirst({ where: { organizationId: flow.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } })
+      // The scheduler's attribution rule (src/lib/scheduling/owners.ts), the
+      // same one emitFlowSignal and the webhook route now use.
+      const ownerId = await resolveRunOwner({ id: flow.id, organizationId: flow.organizationId, userId: flow.userId })
+      const owner = ownerId ? { id: ownerId } : null
       if (!owner) {
         apiLogger.warn('dispatchActivityEvent: no active user to attribute the run to, skipping flow', {
           flowId: flow.id,

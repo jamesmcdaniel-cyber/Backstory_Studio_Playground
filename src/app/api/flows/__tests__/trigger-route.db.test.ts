@@ -129,6 +129,32 @@ if (TEST_DB) {
     assert.equal((await post(flow.id, { secret: 'wrong-secret' })).status, 401)
   })
 
+  test('a QUARANTINED flow → 409 naming the claim, and no run — even from a reactivated owner', async () => {
+    // The schedule tick always skipped quarantined flows; this route fired them,
+    // so a deprovisioned-then-reactivated owner's unclaimed flow ran from here.
+    const flow = await mkFlow({ quarantinedAt: new Date() })
+    const res = await post(flow.id)
+    assert.equal(res.status, 409)
+    assert.equal((await res.json()).code, 'FLOW_QUARANTINED')
+    assert.equal(await prisma.flowRun.count({ where: { flowId: flow.id, organizationId: ids.org } }), 0)
+  })
+
+  test('a flow whose owner moved workspaces runs as this org’s oldest member, like its schedule', async () => {
+    const other = await prisma.organization.create({ data: { name: 'Moved', slug: `moved-${Date.now()}` } })
+    try {
+      const moved = await prisma.user.create({ data: { supabaseId: crypto.randomUUID(), organizationId: other.id } })
+      const flow = await mkFlow({ userId: moved.id })
+      const res = await post(flow.id)
+      assert.equal(res.status, 202, 'this used to 409 while the schedule tick ran the same flow')
+      const body = await res.json()
+      await flushDetachedFlowExecutions()
+      const run = await prisma.flowRun.findUnique({ where: { id: body.run.flowRunId, organizationId: ids.org } })
+      assert.equal(run.userId, ids.user)
+    } finally {
+      await prisma.organization.delete({ where: { id: other.id } }).catch(() => {})
+    }
+  })
+
   test('a filtered delivery answers 200 with filtered:true and creates no run', async () => {
     const flow = await mkFlow({
       trigger: {

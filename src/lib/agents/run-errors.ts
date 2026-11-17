@@ -12,6 +12,7 @@ import { UnrecoverableError } from 'bullmq'
  */
 export type AgentRunRefusalCode =
   | 'AGENT_UNAVAILABLE'
+  | 'AGENT_QUARANTINED'
   | 'TEMPLATE_COPY_GUARD'
   | 'EXECUTION_MISMATCH'
   | 'RESUME_WITHOUT_EXECUTION'
@@ -39,4 +40,27 @@ const UNOWNED_ROW_CODES: ReadonlySet<AgentRunRefusalCode> = new Set([
 /** True when the refusal happened before the job had any claim on the execution row it names. */
 export function refusedBeforeClaimingRow(error: unknown): boolean {
   return error instanceof AgentRunRefusedError && UNOWNED_ROW_CODES.has(error.code)
+}
+
+/**
+ * Whether the runtime may run this agent at all, decided before anything else
+ * is set up.
+ *
+ * Quarantine (src/lib/quarantine.ts) used to be honoured only by the schedule
+ * scans, so a deprovisioned owner's agent still ran from a webhook, a signal or
+ * a job already sitting in the queue — as whichever colleague those paths
+ * picked. Refusing here closes every entry point at once, including ones not
+ * written yet.
+ */
+export function agentRunRefusal(
+  agent: { status: string; quarantinedAt?: Date | null } | null | undefined,
+): AgentRunRefusedError | null {
+  if (!agent || agent.status !== 'ACTIVE') return new AgentRunRefusedError('Agent not found or inactive', 'AGENT_UNAVAILABLE')
+  if (agent.quarantinedAt) {
+    return new AgentRunRefusedError(
+      'This agent is paused until a workspace admin claims it — its owner was removed.',
+      'AGENT_QUARANTINED',
+    )
+  }
+  return null
 }

@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { systemPrisma } from '@/lib/prisma'
 import { ApiError, withAuthenticatedApi } from '@/lib/server/api-handler'
 import { recordAudit } from '@/lib/audit'
+import { apiLogger } from '@/lib/logger'
+import { deprovisionUser } from '@/lib/revoke-user-access'
 import { normalizeDomain, isPublicEmailProvider, COMPANY_EMAIL_DOMAINS } from '@/lib/auth/company-domain'
 import { PLATFORM_OWNER_EMAILS } from '@/lib/authz/platform-owner'
 
@@ -142,19 +144,43 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
   // domain, whereas deactivation also revokes their credentials and quarantines
   // owned work.
   let deactivated = 0
+  let failedToDeactivate = 0
   if (data.disabled && data.deactivateUsers) {
-    const result = await systemPrisma.user.updateMany({
+    const users = await systemPrisma.user.findMany({
       where: {
         organizationId: row.organizationId,
         email: { endsWith: `@${row.domain}` },
         isActive: true,
         // The platform owner is never swept up in a bulk deactivation — and the
-        // users-table trigger would abort the whole updateMany if it were.
+        // users-table trigger would abort their deprovisioning if it were.
         NOT: { email: { in: [...PLATFORM_OWNER_EMAILS], mode: 'insensitive' } },
       },
-      data: { isActive: false },
+      select: { id: true },
     })
-    deactivated = result.count
+    // deprovisionUser per person, not a bare isActive updateMany: the bulk flip
+    // left every credential live (OAuth grants, API keys) and nothing
+    // quarantined, so their scheduled work kept running under whichever
+    // colleague the scheduler picked — the one deactivation path that skipped
+    // the revocation spine. Each person is their own transaction, so one
+    // failure neither rolls back nor blocks the rest.
+    for (const user of users) {
+      try {
+        await deprovisionUser({
+          userId: user.id,
+          organizationId: row.organizationId,
+          reason: 'deactivated',
+          actorUserId: auth.dbUser.id,
+        })
+        deactivated += 1
+      } catch (error) {
+        failedToDeactivate += 1
+        apiLogger.error('domain block: deprovisioning a user failed', {
+          userId: user.id,
+          organizationId: row.organizationId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
   }
 
   await recordAudit({
@@ -163,8 +189,8 @@ export const PATCH = withAuthenticatedApi(async (request, auth) => {
     actorUserId: auth.dbUser.id,
     resourceType: 'platform_allowed_domain',
     resourceId: row.id,
-    detail: { domain: row.domain, deactivatedUsers: deactivated },
+    detail: { domain: row.domain, deactivatedUsers: deactivated, ...(failedToDeactivate ? { failedToDeactivate } : {}) },
   })
 
-  return { success: true, deactivated }
+  return { success: true, deactivated, ...(failedToDeactivate ? { failedToDeactivate } : {}) }
 }, { permission: 'platform.administer', internalOnly: true })

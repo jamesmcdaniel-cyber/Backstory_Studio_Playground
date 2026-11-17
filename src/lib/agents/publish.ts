@@ -102,6 +102,32 @@ export function applyPublishedDefinition<T extends PublishableAgent>(agent: T): 
   }
 }
 
+/**
+ * The schedule the SCHEDULERS should arm: the published one when there is one.
+ *
+ * The runtime always overlaid the published definition, but the registrar and
+ * the tick read the live row — so a draft edit to a published agent's cadence
+ * changed when it fired (and its draft objective became the run's input) with
+ * nothing republished.
+ *
+ * One asymmetry, on purpose: switching the LIVE schedule off still stops it.
+ * Stopping can never do harm, and someone flipping a published agent's
+ * schedule off to halt it must not discover it needed a republish to obey.
+ * Starting it, or changing its cadence, is what publishing gates.
+ */
+export function runSchedule(agent: PublishableAgent): unknown {
+  const published = publishedDefinition(agent)
+  if (!published) return agent.schedule ?? {}
+  const live = isRecord(agent.schedule) ? agent.schedule : null
+  if (live?.isActive === false && isRecord(published.schedule)) return { ...published.schedule, isActive: false }
+  return published.schedule
+}
+
+/** The objective a non-interactive run (schedule, webhook, signal) starts from. */
+export function runObjective(agent: PublishableAgent): string {
+  return publishedDefinition(agent)?.objective ?? agent.objective
+}
+
 /** The connector keys a run may use: the published pin, or live when unpublished. */
 export function pinnedConnectorKeys(agent: PublishableAgent): string[] | null {
   const published = publishedDefinition(agent)

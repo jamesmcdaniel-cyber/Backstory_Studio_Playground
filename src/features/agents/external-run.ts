@@ -27,11 +27,11 @@ import { notify } from '@/lib/notifications/service'
 import { broadcastAgentEventTick } from '@/lib/flows/run-stream'
 import { indexExecution } from '@/lib/rag/indexer'
 import { aiEgressRefusal } from '@/lib/usage/ai-guard'
-import { AgentRunRefusedError } from '@/lib/agents/run-errors'
+import { AgentRunRefusedError, agentRunRefusal } from '@/lib/agents/run-errors'
 import { mintReplyToken } from '@/lib/agents/external/signing'
 import { buildExternalTaskPayload } from '@/lib/agents/external/payload'
 import { readExternalReply } from '@/lib/agents/external/settle'
-import { WAITING_FOR_EXTERNAL, webhookHostOf, type ExternalReply } from '@/lib/agents/external/types'
+import { WAITING_FOR_EXTERNAL, replyKeyProblem, replyKeyProblemMessage, webhookHostOf, type ExternalReply } from '@/lib/agents/external/types'
 import type { AgentExecutionJob } from './execute-agent'
 
 type RunData = AgentExecutionJob & { onExecutionCreated?: (executionId: string) => void | Promise<void> }
@@ -83,7 +83,8 @@ export async function runExternalAgentExecution(agentRow: AgentTask, data: RunDa
 
 async function dispatchTask(agentRow: AgentTask, data: RunData) {
   const { organizationId, userId } = data
-  if (agentRow.status !== 'ACTIVE') throw new AgentRunRefusedError('Agent not found or inactive', 'AGENT_UNAVAILABLE')
+  const refusal = agentRunRefusal(agentRow)
+  if (refusal) throw refusal
 
   const queued = data.executionId
     ? await prisma.agentExecution.findFirst({ where: { id: data.executionId, agentTaskId: agentRow.id, organizationId } })
@@ -126,9 +127,20 @@ async function dispatchTask(agentRow: AgentTask, data: RunData) {
   try {
     const external = await prisma.externalAgent.findFirst({
       where: { agentTaskId: agentRow.id, organizationId },
-      select: { id: true, webhookUrl: true, replyTimeoutMinutes: true },
+      select: {
+        id: true,
+        webhookUrl: true,
+        replyTimeoutMinutes: true,
+        apiKey: {
+          select: { organizationId: true, revokedAt: true, expiresAt: true, user: { select: { isActive: true, organizationId: true } } },
+        },
+      },
     })
     if (!external) throw new Error(`${name} has no delivery settings. Register it again from the Agents page.`)
+    // A task it cannot answer is worse than no task: it would sit until the
+    // deadline and then fail with nothing saying why. Fail now, saying why.
+    const keyProblem = replyKeyProblem(external.apiKey)
+    if (keyProblem) throw new Error(replyKeyProblemMessage(name, keyProblem))
 
     // A workspace that switched AI off has said its data does not leave for an
     // AI system; an external agent is one, whoever operates it.

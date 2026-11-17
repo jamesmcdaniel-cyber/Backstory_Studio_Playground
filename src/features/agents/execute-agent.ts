@@ -31,7 +31,7 @@ import {
 } from './tool-planes'
 import { agentToolConfig, discoveredToolsFromGroups, loadAgentToolGroups, type ArtifactRunContext, type DiscoveredTool, type UnavailableTool } from './agent-tool-resolution'
 import { applyPublishedDefinition } from '@/lib/agents/publish'
-import { AgentRunRefusedError } from '@/lib/agents/run-errors'
+import { AgentRunRefusedError, agentRunRefusal } from '@/lib/agents/run-errors'
 import { EXTERNAL_AGENT_TYPE, isExternalAgentType } from '@/lib/agents/external/types'
 import { startExecutionHeartbeat } from '@/lib/agents/liveness'
 import { scopeDescriptionSuffix, toolScopeViolation, type AgentToolSettings } from '@/lib/connectors/tool-quick-config'
@@ -694,8 +694,12 @@ async function runAgentExecutionInner(
     const { runExternalAgentExecution } = await import('./external-run')
     return runExternalAgentExecution(loadedAgent, data)
   }
-  const agentRow = loadedAgent?.status === 'ACTIVE' ? loadedAgent : null
-  if (!agentRow) throw new AgentRunRefusedError('Agent not found or inactive', 'AGENT_UNAVAILABLE')
+  // Inactive OR quarantined (owner deprovisioned, awaiting a claim) refuses —
+  // the second is what stops a job already queued, or a trigger path that
+  // forgot the filter, from running a removed person's agent.
+  const refusal = agentRunRefusal(loadedAgent)
+  if (refusal) throw refusal
+  const agentRow = loadedAgent!
   const templateCopy = Boolean(agentRow.artifactTemplateCopyId)
   if (templateCopy) {
     // A hidden copilot is not a general-purpose agent. Alternate APIs, flows,

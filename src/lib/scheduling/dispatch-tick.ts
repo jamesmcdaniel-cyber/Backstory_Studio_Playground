@@ -38,7 +38,8 @@ import { isDue, dueOccurrence, type AgentSchedule } from '@/lib/scheduling/due'
 import { workersEnabled } from '@/lib/queue/config'
 import { EXECUTION_MODE } from '@/lib/queue/execution-mode'
 import { reapStuckAgentExecutions } from '@/lib/agents/reap'
-import { reapStuckFlowRuns, reapNeverPickedUpRuns } from '@/lib/flows/reap'
+import { reapStuckFlowRuns, reapNeverPickedUpRuns, failOwnerlessWaits } from '@/lib/flows/reap'
+import { runObjective, runSchedule } from '@/lib/agents/publish'
 import { sweepTemplateGeneration } from '@/lib/templates/generation-queue'
 import { blocksSchedule } from '@/lib/flows/schedule-blocking'
 import { captureError } from '@/lib/observability/sentry'
@@ -317,9 +318,14 @@ export async function runDispatchTick(
       systemPrisma.agentTask.findMany({
         // quarantinedAt: work whose owner was deprovisioned. systemPrisma
         // bypasses the credential owner guard, so the exclusion is explicit here.
+        // organization.kind: a demo sandbox is a clone of a real workspace, and
+        // dispatching its copies re-ran the source org's scheduled fleet, with
+        // real model spend, once per sandbox. The clone disarms on copy
+        // (demo/snapshot.ts); this is the backstop.
         where: {
           status: 'ACTIVE',
           quarantinedAt: null,
+          organization: { kind: { not: 'demo' } },
           OR: [{ nextRunAt: null }, { nextRunAt: { lte: now } }],
         },
         orderBy: { id: 'asc' },
@@ -333,9 +339,11 @@ export async function runDispatchTick(
       })
     }
 
-    // Filter to agents whose schedule is currently due
+    // Filter to agents whose schedule is currently due. runSchedule: a
+    // published agent fires on its PUBLISHED cadence — reading the live column
+    // let a draft edit move (or start) the next scheduled run unreviewed.
     const dueAgentsAll = agentScan.rows.filter((agent) => {
-      const schedule = agent.schedule as unknown as AgentSchedule | null
+      const schedule = runSchedule(agent) as AgentSchedule | null
       if (!schedule || typeof schedule !== 'object') return false
       if (!isDue(schedule, agent.lastExecutedAt, now)) return false
       // In worker mode, only 'once' agents are dispatched here; recurring ones
@@ -357,7 +365,7 @@ export async function runDispatchTick(
       'agent',
       agentScan.rows.filter((agent) => !dueAgentIds.has(agent.id)),
       (agent) => {
-        const schedule = agent.schedule as unknown as AgentSchedule | null
+        const schedule = runSchedule(agent) as AgentSchedule | null
         // A recurring agent in queue mode is due, but this tick is not what
         // fires it — the BullMQ JobScheduler is. Stamping it from its real
         // lastExecutedAt would compute "due now", pinning every recurring agent
@@ -369,7 +377,7 @@ export async function runDispatchTick(
         // out of the range until then, and BullMQ's ownership is unaffected —
         // this column has no bearing on what the scheduler queue does.
         const ownedByQueue = workerOwnsRecurring && schedule?.type !== undefined && schedule.type !== 'once'
-        return computeNextRunAt(agent.schedule, ownedByQueue ? now : agent.lastExecutedAt, now)
+        return computeNextRunAt(schedule, ownedByQueue ? now : agent.lastExecutedAt, now)
       },
       (ids, at) => systemPrisma.agentTask.updateMany({ where: { id: { in: ids } }, data: { nextRunAt: at } }),
     )
@@ -435,12 +443,14 @@ export async function runDispatchTick(
 
         // Pass the raw objective — runAgentExecution composes skills into the
         // system prompt itself, so composing here too would double-apply them.
-        const input = agent.objective
+        // The PUBLISHED objective: the runtime seeds the run with this input,
+        // so the draft's would override what was published.
+        const input = runObjective(agent)
 
         // Occurrence identity for this run. Reuses the EXISTING
         // @@unique([organizationId, idempotencyKey]) that signal-triggered runs
         // already use (`${signalId}:${agentId}`) — no migration needed.
-        const schedule = agent.schedule as unknown as AgentSchedule
+        const schedule = runSchedule(agent) as AgentSchedule
         const occurrence = dueOccurrence(schedule, previousLastExecutedAt, now)
 
         // Create the execution row in pending state
@@ -544,6 +554,8 @@ export async function runDispatchTick(
           status: 'ACTIVE',
           publishedGraph: { not: Prisma.AnyNull },
           quarantinedAt: null,
+          // Demo sandboxes never dispatch — see the agent scan above.
+          organization: { kind: { not: 'demo' } },
           OR: [{ nextRunAt: null }, { nextRunAt: { lte: now } }],
         },
         // Explicit select, NOT include: this scan now reads every active flow,
@@ -720,11 +732,15 @@ export async function runDispatchTick(
         take: MAX_FLOWS_PER_TICK,
         select: { id: true, flowId: true, organizationId: true, userId: true, resumeAt: true },
       })
-      const waitOwners = await resolveRunOwners(dueWaits)
+      const waitOwners = await (deps.resolveRunOwners ?? resolveRunOwners)(dueWaits)
+      const ownerless: typeof dueWaits = []
       for (const run of dueWaits) {
         try {
           const userId = waitOwners.get(run.id)
-          if (!userId) continue
+          if (!userId) {
+            ownerless.push(run)
+            continue
+          }
           // reply '' is the timer signal — the wait step resumes with { resumed: true }.
           await dispatchDetachedFlowExecution({
             flowId: run.flowId,
@@ -738,6 +754,19 @@ export async function runDispatchTick(
           resumedWaitIds.push(run.id)
         } catch (error) {
           apiLogger.error('cron/dispatch: wait resume failed, skipping', { flowRunId: run.id, error: capError(error) })
+        }
+      }
+      // A run nobody may resume (owner deprovisioned, or no active member
+      // left) is failed rather than skipped: skipping left it at the head of
+      // the oldest-resumeAt read, and enough of them stopped every other
+      // workspace's timers resuming. Isolated so it never costs the resumes.
+      if (ownerless.length) {
+        try {
+          const failed = await failOwnerlessWaits(ownerless, now)
+          apiLogger.warn('cron/dispatch: failed waiting runs whose owner is no longer active', { count: failed })
+        } catch (error) {
+          apiLogger.error('cron/dispatch: ownerless wait sweep failed', { error: capError(error) })
+          captureError(error, { source: 'cron.dispatch.ownerlessWaits' })
         }
       }
     } catch (error) {

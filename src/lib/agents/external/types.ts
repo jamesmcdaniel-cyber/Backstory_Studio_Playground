@@ -109,6 +109,46 @@ export type ExternalAgentSecrets = {
   apiKey?: { clientId: string; clientSecret: string; tokenUrl: string; expiresAt: string }
 }
 
+/** The reply key as the reply endpoint's authentication will judge it. */
+export type ReplyKeyState = {
+  organizationId: string
+  revokedAt: Date | null
+  expiresAt: Date | null
+  user: { isActive: boolean; organizationId: string | null } | null
+} | null
+
+export type ReplyKeyProblem = 'missing' | 'revoked' | 'expired' | 'owner_removed'
+
+/**
+ * Why a reply sent with this key would be refused, or null when it would not.
+ *
+ * The key is an ApiKey owned by whoever registered the agent, so it dies with
+ * them: deprovisioning or a workspace move revokes it, and authentication
+ * (src/lib/public-api/auth.ts) also refuses a key whose owner is no longer an
+ * active member. The agent itself stayed ACTIVE, so every task was delivered
+ * and every reply 401'd until someone happened to rotate. Mirrors that check,
+ * so a task is never sent that cannot be answered.
+ */
+export function replyKeyProblem(key: ReplyKeyState, now: Date = new Date()): ReplyKeyProblem | null {
+  if (!key) return 'missing'
+  if (key.revokedAt) return 'revoked'
+  if (key.expiresAt && key.expiresAt.getTime() <= now.getTime()) return 'expired'
+  if (!key.user || !key.user.isActive || key.user.organizationId !== key.organizationId) return 'owner_removed'
+  return null
+}
+
+const REPLY_KEY_PROBLEM_TEXT: Record<ReplyKeyProblem, string> = {
+  missing: 'has no reply API key',
+  revoked: 'has had its reply API key revoked',
+  expired: 'has an expired reply API key',
+  owner_removed: 'has a reply API key whose owner is no longer in this workspace',
+}
+
+/** What the run fails with — and what to do about it. */
+export function replyKeyProblemMessage(name: string, problem: ReplyKeyProblem): string {
+  return `${name} ${REPLY_KEY_PROBLEM_TEXT[problem]}, so its answer would be refused and the task was not sent. Issue a new API key in its settings, give it to the agent, then run it again.`
+}
+
 export function webhookHostOf(url: string): string {
   try {
     return new URL(url).host

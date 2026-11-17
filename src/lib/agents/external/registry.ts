@@ -28,6 +28,7 @@ import {
   EXTERNAL_AGENT_TYPE,
   EXTERNAL_TIMEOUT_DEFAULT_MINUTES,
   WAITING_FOR_EXTERNAL,
+  replyKeyProblem,
   webhookHostOf,
   type ExternalAgentSecrets,
   type ExternalAgentView,
@@ -48,7 +49,24 @@ export async function assertDeliverableWebhook(url: string): Promise<void> {
   }
 }
 
-type ExternalRow = Prisma.ExternalAgentGetPayload<{ include: { agentTask: true; apiKey: true } }>
+/**
+ * The key's owner rides along so `revoked` can say what authentication will:
+ * a key whose registrant was removed or moved is dead even with no revokedAt,
+ * and the settings screen should offer "Issue key", not "Rotate", for it.
+ */
+const EXTERNAL_ROW_INCLUDE = {
+  agentTask: true,
+  apiKey: { include: { user: { select: { isActive: true, organizationId: true } } } },
+} satisfies Prisma.ExternalAgentInclude
+
+type ExternalRow = Prisma.ExternalAgentGetPayload<{ include: typeof EXTERNAL_ROW_INCLUDE }>
+
+function replyKeyDead(apiKey: ExternalRow['apiKey']): boolean {
+  const problem = replyKeyProblem(apiKey)
+  // Expiry is shown on its own (expiresAt); `revoked` is the "it will never
+  // work again" state.
+  return problem === 'revoked' || problem === 'owner_removed'
+}
 
 export function serializeExternalAgent(row: ExternalRow): ExternalAgentView {
   const title = (row.agentTask.metadata as { title?: unknown } | null)?.title
@@ -63,7 +81,7 @@ export function serializeExternalAgent(row: ExternalRow): ExternalAgentView {
     enabled: row.agentTask.status === 'ACTIVE',
     signingSecretRotatedAt: row.signingSecretRotatedAt?.toISOString() ?? null,
     apiKey: row.apiKey
-      ? { id: row.apiKey.id, clientId: row.apiKey.clientId, expiresAt: row.apiKey.expiresAt?.toISOString() ?? null, revoked: Boolean(row.apiKey.revokedAt) }
+      ? { id: row.apiKey.id, clientId: row.apiKey.clientId, expiresAt: row.apiKey.expiresAt?.toISOString() ?? null, revoked: replyKeyDead(row.apiKey) }
       : null,
     lastDelivery: row.lastDeliveryAt && (row.lastDeliveryStatus === 'delivered' || row.lastDeliveryStatus === 'failed')
       ? { at: row.lastDeliveryAt.toISOString(), status: row.lastDeliveryStatus, error: row.lastDeliveryError }
@@ -76,7 +94,7 @@ export function serializeExternalAgent(row: ExternalRow): ExternalAgentView {
 export async function loadExternalAgent(organizationId: string, agentId: string) {
   return prisma.externalAgent.findFirst({
     where: { organizationId, agentTaskId: agentId, agentTask: { status: { not: 'DELETED' } } },
-    include: { agentTask: true, apiKey: true },
+    include: EXTERNAL_ROW_INCLUDE,
   })
 }
 
@@ -155,7 +173,7 @@ export async function registerExternalAgent(params: {
         replyTimeoutMinutes: input.replyTimeoutMinutes ?? EXTERNAL_TIMEOUT_DEFAULT_MINUTES,
         createdById: actorUserId,
       },
-      include: { agentTask: true, apiKey: true },
+      include: EXTERNAL_ROW_INCLUDE,
     })
   })
   await recordCredentialGrant({

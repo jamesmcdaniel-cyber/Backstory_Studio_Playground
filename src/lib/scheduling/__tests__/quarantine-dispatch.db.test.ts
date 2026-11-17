@@ -43,6 +43,12 @@ test('both dispatch candidate scans filter out quarantined work', () => {
   assert.match(agentScan, /quarantinedAt: null/, 'the agent scan must exclude quarantined tasks')
   assert.match(flowScan, /quarantinedAt: null/, 'the flow scan must exclude quarantined flows')
 
+  // Demo sandboxes are clones of real workspaces; dispatching them re-ran the
+  // source org's scheduled fleet once per sandbox.
+  for (const [label, scan] of [['agent', agentScan], ['flow', flowScan]] as const) {
+    assert.match(scan, /organization: \{ kind: \{ not: 'demo' \} \}/, `the ${label} scan must skip demo orgs`)
+  }
+
   // The due-range pre-filter must include un-stamped rows. Without the NULL
   // branch a freshly migrated or freshly edited row is invisible to the
   // scheduler — the silent-stop failure this column was added to prevent.

@@ -8,7 +8,9 @@ export default async function PublicHostedFormPage({ params }: { params: Promise
   // systemPrisma: public hosted-form lookup has no session/org context; the
   // globally unique flow id is only usable when the published trigger says form.
   const flow = await systemPrisma.flow.findFirst({
-    where: { id, status: 'ACTIVE' },
+    // quarantinedAt: the submit route refuses a quarantined flow, so the page
+    // must not offer a form that cannot be sent.
+    where: { id, status: 'ACTIVE', quarantinedAt: null },
     select: { id: true, name: true, trigger: true, publishedGraph: true },
   })
   const definition = flow ? hostedFormDefinition(flow.name, flow.trigger) : null

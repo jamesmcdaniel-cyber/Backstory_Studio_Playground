@@ -115,3 +115,17 @@ export async function resolveRunOwners(candidates: OwnedCandidate[]): Promise<Ma
 
   return attributeOwners(candidates, explicitOwners, members)
 }
+
+/**
+ * `resolveRunOwners` for the one row an event-driven trigger (webhook, form,
+ * signal, activity) is about to fire.
+ *
+ * Those paths each carried their own copy of the ladder, and the copies had
+ * drifted from the scheduler's: the agent webhook and signal paths ran a
+ * DEPROVISIONED owner's agent as the org's oldest member, while the flow paths
+ * refused a flow whose owner had merely moved workspaces — work the schedule
+ * tick would have run. One rule, one implementation: null means "do not run".
+ */
+export async function resolveRunOwner(candidate: OwnedCandidate): Promise<string | null> {
+  return (await resolveRunOwners([candidate])).get(candidate.id) ?? null
+}

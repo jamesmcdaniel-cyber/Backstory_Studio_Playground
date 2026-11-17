@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma, systemPrisma } from '@/lib/prisma'
+import { runObjective } from '@/lib/agents/publish'
+import { resolveRunOwner } from '@/lib/scheduling/owners'
 import { createQueue, QUEUE_NAMES, workersEnabled } from '@/lib/queue/config'
 import { apiLogger } from '@/lib/logger'
 import { runAgentExecution } from '@/features/agents/execute-agent'
@@ -37,7 +39,7 @@ export async function POST(request: NextRequest) {
     }
 
     // systemPrisma: session-less webhook trigger (per-agent secret, no org context); agent id is globally unique.
-  const agent = await systemPrisma.agentTask.findFirst({ where: { id, status: 'ACTIVE' } })
+    const agent = await systemPrisma.agentTask.findFirst({ where: { id, status: 'ACTIVE' } })
     const metadata = agent?.metadata && typeof agent.metadata === 'object' ? agent.metadata as Record<string, unknown> : {}
     const verdict = agent ? verifyAgentTriggerSecret(provided, metadata) : 'invalid'
     if (!agent || verdict !== 'ok') {
@@ -55,6 +57,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid trigger secret' }, { status: 401 })
     }
 
+    // Quarantined: the owner was deprovisioned and the agent waits for an admin
+    // to claim it. Checked AFTER the secret, so only a caller holding it learns
+    // why — and told plainly rather than "invalid secret", so nobody rotates a
+    // credential that was never the problem.
+    if (agent.quarantinedAt) {
+      return NextResponse.json(
+        { success: false, error: 'This agent is paused until a workspace admin claims it — its owner was removed.', code: 'AGENT_QUARANTINED' },
+        { status: 409 },
+      )
+    }
+
     let body: { input?: unknown }
     try {
       body = await readRequestJsonLimited<{ input?: unknown }>(request, AGENT_TRIGGER_MAX_BODY_BYTES)
@@ -63,25 +76,20 @@ export async function POST(request: NextRequest) {
       throw error
     }
     // Skills are composed into the system prompt inside runAgentExecution — pass
-    // the raw objective so attached skills aren't applied twice.
-    const input = typeof body.input === 'string' && body.input.trim() ? body.input.trim() : agent.objective
+    // the raw objective so attached skills aren't applied twice. The PUBLISHED
+    // objective when there is one: the draft's would otherwise become the run's
+    // opening message and override what was published.
+    const input = typeof body.input === 'string' && body.input.trim() ? body.input.trim() : runObjective(agent)
 
-    // Attribute the run to the agent's owner when set; otherwise fall back to
-    // the org's oldest active member (shared agents have no single owner).
-    const owner = agent.userId
-      ? await prisma.user.findFirst({
-          where: { id: agent.userId, organizationId: agent.organizationId, isActive: true },
-        })
-      : null
-    const user =
-      owner ||
-      (await prisma.user.findFirst({
-        where: { organizationId: agent.organizationId, isActive: true },
-        orderBy: { createdAt: 'asc' },
-      }))
-    if (!user) {
-      return NextResponse.json({ success: false, error: 'No active user in organization' }, { status: 409 })
+    // The scheduler's attribution rule (src/lib/scheduling/owners.ts): the
+    // named owner while they are an active member here; a deprovisioned owner
+    // stops the run; a shared agent runs as the org's oldest active member.
+    // This route used to hand a deprovisioned owner's agent to that member.
+    const ownerId = await resolveRunOwner({ id: agent.id, organizationId: agent.organizationId, userId: agent.userId })
+    if (!ownerId) {
+      return NextResponse.json({ success: false, error: 'No active owner to attribute the run to' }, { status: 409 })
     }
+    const user = { id: ownerId }
 
     // Idempotency: at-least-once/retrying senders (Pipedream, monitors) can
     // deliver the same event twice. When they supply a key, a duplicate returns

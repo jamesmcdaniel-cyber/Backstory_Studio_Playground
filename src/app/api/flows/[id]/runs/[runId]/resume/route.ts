@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { systemPrisma, prisma, tenantTransaction } from '@/lib/prisma'
+import { systemPrisma, tenantTransaction } from '@/lib/prisma'
+import { resolveRunOwner } from '@/lib/scheduling/owners'
 import { rateLimit } from '@/lib/ratelimit'
 import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
 import { flowInputFromWebhookBody } from '@/lib/flows/input'
@@ -83,9 +84,10 @@ export async function POST(request: NextRequest) {
   }
   const payload = flowInputFromWebhookBody(body)
 
-  const userId =
-    run.userId ??
-    (await prisma.user.findFirst({ where: { organizationId: run.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } }))?.id
+  // The scheduler's attribution rule (src/lib/scheduling/owners.ts), as the
+  // timer-resume pass uses: a run whose owner was deprovisioned does not resume
+  // as them. This used run.userId unchecked.
+  const userId = await resolveRunOwner({ id: run.id, organizationId: run.organizationId, userId: run.userId })
   if (!userId) return NextResponse.json({ success: false, error: 'No active user to resume the run.' }, { status: 409 })
 
   const reply = typeof payload === 'string' && payload ? payload : JSON.stringify(payload ?? {})

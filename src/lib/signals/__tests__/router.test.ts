@@ -116,6 +116,40 @@ if (ENABLED) {
     assert.equal(count, 1)
   })
 
+  test('quarantined agents and deprovisioned owners are not routed; a published agent starts from its published objective', async () => {
+    const type = `owner.lifecycle.${Date.now()}`
+    const suspended = await prisma.user.create({
+      data: { supabaseId: crypto.randomUUID(), organizationId: ids.org, isActive: false },
+    })
+    const agent = (over: Record<string, unknown>) =>
+      prisma.agentTask.create({
+        data: { description: 'lifecycle', objective: 'draft objective', status: 'ACTIVE', agentType: 'assistant', organizationId: ids.org, ...over },
+      })
+    const quarantined = await agent({ userId: suspended.id, quarantinedAt: new Date() })
+    const orphaned = await agent({ userId: suspended.id })
+    const published = await agent({
+      userId: ids.user,
+      publishedConfig: { description: 'lifecycle', objective: 'published objective' },
+    })
+    for (const target of [quarantined, orphaned, published]) {
+      await prisma.signalSubscription.create({ data: { organizationId: ids.org, signalType: type, agentTaskId: target.id } })
+    }
+    const signal = await prisma.signal.create({
+      data: { organizationId: ids.org, type, payload: {}, dedupeKey: `evt-lifecycle-${Date.now()}` },
+    })
+
+    const dispatched: any[] = []
+    const result = await routeSignal(signal.id, async (job: any) => dispatched.push(job))
+
+    // The quarantined one is not even a match; the orphaned one matches but has
+    // nobody it may run as — it used to run as the org's oldest member.
+    assert.equal(result.matched, 2)
+    assert.deepEqual(dispatched.map((job) => job.agentId), [published.id])
+    assert.equal(dispatched[0].input, 'published objective')
+    assert.equal(dispatched[0].userId, ids.user)
+    // (The suspended user goes with the org in after().)
+  })
+
   test('non-matching filter routes nothing', async () => {
     const result = await routeSignal(ids.lowSignal, async () => {
       throw new Error('should not dispatch')

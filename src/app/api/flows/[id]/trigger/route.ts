@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma, systemPrisma } from '@/lib/prisma'
+import { resolveRunOwner } from '@/lib/scheduling/owners'
 import { apiLogger } from '@/lib/logger'
 import { startFlowExecution } from '@/features/flows/execute-flow'
 import { hashToken, timingSafeEqualHex } from '@/lib/crypto/secrets'
@@ -74,11 +75,21 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // The run is attributed to the flow's owner (or the org's oldest member).
-    const owner = flow.userId
-      ? await prisma.user.findFirst({ where: { id: flow.userId, organizationId: flow.organizationId, isActive: true } })
-      : await prisma.user.findFirst({ where: { organizationId: flow.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } })
-    if (!owner) return NextResponse.json({ success: false, error: 'No active user to attribute the run to' }, { status: 409 })
+    // Quarantined: its owner was deprovisioned and it waits for an admin to
+    // claim it. The schedule tick always skipped these; this route fired them
+    // — including from an owner who had since been reactivated.
+    if (flow.quarantinedAt) {
+      return NextResponse.json(
+        { success: false, error: 'This flow is paused until a workspace admin claims it — its owner was removed.', code: 'FLOW_QUARANTINED' },
+        { status: 409 },
+      )
+    }
+
+    // The scheduler's attribution rule (src/lib/scheduling/owners.ts), so a
+    // webhook and a schedule agree on who a run belongs to.
+    const ownerId = await resolveRunOwner({ id: flow.id, organizationId: flow.organizationId, userId: flow.userId })
+    if (!ownerId) return NextResponse.json({ success: false, error: 'No active user to attribute the run to' }, { status: 409 })
+    const owner = { id: ownerId }
 
     let bytes: Buffer
     try {

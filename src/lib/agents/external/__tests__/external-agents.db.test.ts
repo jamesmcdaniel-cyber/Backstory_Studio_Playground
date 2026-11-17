@@ -273,6 +273,24 @@ if (TEST_DB) {
     assert.equal(await prisma.externalAgent.count({ where: { agentTaskId: view.agentId, organizationId: orgId } }), 0)
   })
 
+  test('a dead reply key fails the run up front and shows as revoked; issuing a new key brings it back', async () => {
+    // The key belongs to whoever registered the agent, so deprovisioning them
+    // (or a workspace move) revokes it while the agent stays ACTIVE. Tasks kept
+    // going out and every reply 401'd until someone happened to rotate.
+    const { view } = await register({ name: 'Orphaned' })
+    const registered = await prisma.externalAgent.findFirst({ where: { agentTaskId: view.agentId, organizationId: orgId } })
+    await prisma.apiKey.updateMany({ where: { id: registered.apiKeyId, organizationId: orgId }, data: { revokedAt: new Date() } })
+
+    await assert.rejects(dispatch(view.agentId), /reply API key revoked.*Issue a new API key/)
+    assert.equal(network.state.webhook.length, 0, 'no task is sent that could never be answered')
+    const loaded = await registry.loadExternalAgent(orgId, view.agentId)
+    assert.equal(registry.serializeExternalAgent(loaded!).apiKey?.revoked, true, 'settings offer "Issue key", not "Rotate"')
+
+    await registry.rotateExternalAgentCredential({ organizationId: orgId, actorUserId: userId, agentId: view.agentId, credential: 'api_key' })
+    const resumed = await dispatch(view.agentId)
+    assert.equal(resumed.status, 'waiting_for_external')
+  })
+
   test('rotating the signing secret signs the next delivery with the new one', async () => {
     const { view, secrets } = await register({ name: 'Rotator' })
     const { secrets: rotated } = await registry.rotateExternalAgentCredential({ organizationId: orgId, actorUserId: userId, agentId: view.agentId, credential: 'signing_secret' })

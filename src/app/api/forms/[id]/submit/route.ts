@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma, systemPrisma } from '@/lib/prisma'
+import { systemPrisma } from '@/lib/prisma'
+import { resolveRunOwner } from '@/lib/scheduling/owners'
 import { startFlowExecution } from '@/features/flows/execute-flow'
 import { hostedFormDefinition, normalizeHostedFormSubmission } from '@/lib/flows/form'
 import { triggerConditionPasses } from '@/lib/flows/trigger-condition'
@@ -38,7 +39,9 @@ export async function POST(request: NextRequest) {
     // trigger/status/published checks below are the complete exposure gate.
     const flow = await systemPrisma.flow.findFirst({ where: { id } })
     const definition = flow ? hostedFormDefinition(flow.name, flow.trigger) : null
-    if (!flow || !definition || flow.status !== 'ACTIVE' || !flow.publishedGraph) {
+    // quarantinedAt: the owner was deprovisioned and the flow waits to be
+    // claimed — a public form must not keep starting it meanwhile.
+    if (!flow || !definition || flow.status !== 'ACTIVE' || !flow.publishedGraph || flow.quarantinedAt) {
       return NextResponse.json({ success: false, error: 'This form is not available.' }, { status: 404 })
     }
     let input: Record<string, unknown>
@@ -47,10 +50,10 @@ export async function POST(request: NextRequest) {
     if (!triggerConditionPasses(flow.trigger, input)) {
       return NextResponse.json({ success: true, filtered: true })
     }
-    const owner = flow.userId
-      ? await prisma.user.findFirst({ where: { id: flow.userId, organizationId: flow.organizationId, isActive: true } })
-      : await prisma.user.findFirst({ where: { organizationId: flow.organizationId, isActive: true }, orderBy: { createdAt: 'asc' } })
-    if (!owner) return NextResponse.json({ success: false, error: 'This form is temporarily unavailable.' }, { status: 409 })
+    // The scheduler's attribution rule (src/lib/scheduling/owners.ts).
+    const ownerId = await resolveRunOwner({ id: flow.id, organizationId: flow.organizationId, userId: flow.userId })
+    if (!ownerId) return NextResponse.json({ success: false, error: 'This form is temporarily unavailable.' }, { status: 409 })
+    const owner = { id: ownerId }
     const started = await startFlowExecution({
       flowId: flow.id,
       organizationId: flow.organizationId,

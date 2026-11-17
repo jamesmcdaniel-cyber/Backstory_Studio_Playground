@@ -98,6 +98,39 @@ if (TEST_DB) {
     assert.equal(await isAllowedEmail(`employee@${COMPANY_DOMAIN}`), true, 'admission is hardcoded, not this row')
   })
 
+  test('block + deactivate DEPROVISIONS each account: keys revoked, owned work quarantined', async () => {
+    // The bulk path used to be a bare isActive updateMany — the one
+    // deactivation that skipped the revocation spine, so its people's keys
+    // stayed live and their scheduled agents ran on under a colleague.
+    const domain = `g1-${crypto.randomUUID().slice(0, 8)}.example`
+    const created = await route.POST(post({ domain, organizationId: reviewer.organizationId }))
+    assert.equal(created.status, 200, await created.text())
+    const row = await systemPrisma.platformAllowedDomain.findUnique({ where: { domain } })
+    const person = await prisma.user.create({
+      data: { supabaseId: crypto.randomUUID(), organizationId: reviewer.organizationId, email: `rep@${domain}`, isActive: true },
+    })
+    const agent = await prisma.agentTask.create({
+      data: { description: 'theirs', objective: 'x', status: 'ACTIVE', organizationId: reviewer.organizationId, userId: person.id },
+    })
+    const key = await systemPrisma.apiKey.create({
+      data: { organizationId: reviewer.organizationId, userId: person.id, name: 'k', keyHash: `h-${crypto.randomUUID()}`, prefix: 'p' },
+    })
+    try {
+      const response = await route.PATCH(patch({ id: row.id, disabled: true, deactivateUsers: true }))
+      assert.equal(response.status, 200, await response.clone().text())
+      assert.equal((await response.json()).deactivated, 1)
+
+      const after = await systemPrisma.user.findUnique({ where: { id: person.id } })
+      assert.equal(after.isActive, false)
+      const task = await systemPrisma.agentTask.findUnique({ where: { id: agent.id } })
+      assert.ok(task.quarantinedAt, 'their agent waits to be claimed instead of running as someone else')
+      const revoked = await systemPrisma.apiKey.findUnique({ where: { id: key.id } })
+      assert.ok(revoked.revokedAt, 'their API key is revoked')
+    } finally {
+      await systemPrisma.platformAllowedDomain.deleteMany({ where: { domain } }).catch(() => {})
+    }
+  })
+
   test('a public email provider is still refused outright', async () => {
     const response = await route.POST(post({ domain: 'gmail.com', organizationId: reviewer.organizationId }))
     assert.equal(response.status, 400)

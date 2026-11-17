@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { registerAgentSchedules, repeatFor, type ScheduleRegistrarDeps } from '../agent-schedule-registrar'
+import { attributeOwners } from '@/lib/scheduling/owners'
 
 /**
  * Schedule reconciliation is the worker's other job, and it fails silently: a
@@ -58,24 +59,26 @@ interface Recorded {
   closed: boolean
 }
 
-function harness(agents: any[], users: any[] = [], upsertFails = new Set<string>()) {
+function harness(
+  agents: any[],
+  users: any[] = [],
+  upsertFails = new Set<string>(),
+  options: { schedulers?: string[]; existing?: string[] } = {},
+) {
   const recorded: Recorded = { removed: [], upserted: [], closed: false }
   const deps: ScheduleRegistrarDeps = {
-    agents: { findMany: async () => agents },
-    users: {
-      findFirst: async (args: any) => {
-        const where = args.where ?? {}
-        const matches = users.filter(
-          (user) =>
-            (where.id === undefined || user.id === where.id) &&
-            (where.organizationId === undefined || user.organizationId === where.organizationId) &&
-            (where.isActive === undefined || user.isActive === where.isActive),
-        )
-        if (args.orderBy?.createdAt === 'asc') {
-          matches.sort((a, b) => Number(a.createdAt) - Number(b.createdAt))
-        }
-        return matches[0] ?? null
-      },
+    agents: {
+      findMany: async () => agents,
+      existingIds: async (ids) => ids.filter((id) => (options.existing ?? []).includes(id)),
+    },
+    // The real rule, fed from the fixture — what resolveRunOwners does with
+    // its two queries (explicit owners unfiltered, members active + oldest-first).
+    owners: async (candidates) => {
+      const explicitIds = new Set(candidates.map((c) => c.userId).filter(Boolean))
+      const members = users
+        .filter((u) => u.isActive)
+        .sort((a, b) => Number(a.createdAt) - Number(b.createdAt))
+      return attributeOwners(candidates, users.filter((u) => explicitIds.has(u.id)), members)
     },
     queue: () => ({
       removeJobScheduler: async (id) => { recorded.removed.push(id) },
@@ -83,6 +86,7 @@ function harness(agents: any[], users: any[] = [], upsertFails = new Set<string>
         if (upsertFails.has(id)) throw new Error('invalid cron expression')
         recorded.upserted.push({ id, repeat, job })
       },
+      ...(options.schedulers ? { getJobSchedulers: async () => options.schedulers!.map((key) => ({ key })) } : {}),
       close: async () => { recorded.closed = true },
     }),
   }
@@ -93,6 +97,7 @@ const agent = (over: Record<string, unknown> = {}) => ({
   id: 'a1',
   organizationId: 'org-1',
   userId: null,
+  description: 'agent',
   objective: 'do the thing',
   status: 'ACTIVE',
   schedule: { type: 'daily', time: '09:00', isActive: true },
@@ -175,7 +180,7 @@ describe('registerAgentSchedules', () => {
     assert.equal(recorded.upserted[0].job.data.userId, 'oldest')
   })
 
-  test('a deactivated owner falls back to another active member', async () => {
+  test('an owner id with no user row behind it falls back to another active member', async () => {
     const { deps, recorded } = harness(
       [agent({ userId: 'gone' })],
       [user({ id: 'still-here', createdAt: new Date('2021-01-01') })],
@@ -186,11 +191,90 @@ describe('registerAgentSchedules', () => {
     assert.equal(recorded.upserted[0].job.data.userId, 'still-here')
   })
 
+  test('a DEACTIVATED owner gets no scheduler — never the oldest member', async () => {
+    // The bug: the owner lookup filtered isActive in SQL, so a suspended owner
+    // looked absent and the agent re-armed under a colleague.
+    const { deps, recorded } = harness(
+      [agent({ userId: 'suspended' })],
+      [
+        user({ id: 'suspended', isActive: false, createdAt: new Date('2022-01-01') }),
+        user({ id: 'colleague', createdAt: new Date('2019-01-01') }),
+      ],
+    )
+
+    assert.deepEqual(await registerAgentSchedules(deps), { registered: 0, failed: 0 })
+    assert.deepEqual(recorded.upserted, [])
+    assert.deepEqual(recorded.removed, ['agent:a1'])
+  })
+
+  test('an owner who moved workspaces falls back to this org’s oldest member', async () => {
+    const { deps, recorded } = harness(
+      [agent({ userId: 'moved' })],
+      [user({ id: 'moved', organizationId: 'org-2' }), user({ id: 'stayed', createdAt: new Date('2021-01-01') })],
+    )
+
+    await registerAgentSchedules(deps)
+
+    assert.equal(recorded.upserted[0].job.data.userId, 'stayed')
+  })
+
   test('an org with no active member registers nothing and is not counted failed', async () => {
     const { deps, recorded } = harness([agent()], [])
 
     assert.deepEqual(await registerAgentSchedules(deps), { registered: 0, failed: 0 })
     assert.deepEqual(recorded.upserted, [])
+  })
+
+  test('a published agent arms its PUBLISHED schedule and objective, not the draft', async () => {
+    const published = agent({
+      userId: 'u1',
+      objective: 'draft objective',
+      schedule: { type: 'hourly', isActive: true },
+      publishedConfig: {
+        description: 'agent',
+        objective: 'published objective',
+        schedule: { type: 'daily', time: '06:30', isActive: true },
+      },
+    })
+    const { deps, recorded } = harness([published], [user()])
+
+    await registerAgentSchedules(deps)
+
+    assert.deepEqual(recorded.upserted[0].repeat, { pattern: '30 6 * * *', tz: 'UTC' })
+    assert.equal(recorded.upserted[0].job.data.input, 'published objective')
+  })
+
+  test('switching a published agent’s live schedule off still disarms it', async () => {
+    const published = agent({
+      schedule: { type: 'daily', isActive: false },
+      publishedConfig: { description: 'agent', objective: 'x', schedule: { type: 'daily', isActive: true } },
+    })
+    const { deps, recorded } = harness([published], [user()])
+
+    await registerAgentSchedules(deps)
+
+    assert.deepEqual(recorded.upserted, [])
+    assert.deepEqual(recorded.removed, ['agent:a1'])
+  })
+
+  test('a demo sandbox’s agents are never armed', async () => {
+    const { deps, recorded } = harness([agent({ organization: { kind: 'demo' } })], [user()])
+
+    await registerAgentSchedules(deps)
+
+    assert.deepEqual(recorded.upserted, [])
+    assert.deepEqual(recorded.removed, ['agent:a1'])
+  })
+
+  test('a scheduler whose agent row is gone is removed; foreign and still-existing ones are kept', async () => {
+    const { deps, recorded } = harness([agent({ userId: 'u1' })], [user()], new Set(), {
+      schedulers: ['agent:a1', 'agent:deleted', 'agent:created-by-another-worker', 'other:thing'],
+      existing: ['created-by-another-worker'],
+    })
+
+    await registerAgentSchedules(deps)
+
+    assert.deepEqual(recorded.removed, ['agent:deleted'])
   })
 
   test('one bad agent does not stop the rest of the fleet reconciling', async () => {
@@ -207,12 +291,14 @@ describe('registerAgentSchedules', () => {
   test('the queue connection is closed even when reconciliation throws', async () => {
     const { deps, recorded } = harness([])
     deps.agents.findMany = async () => [agent()]
-    deps.users.findFirst = async () => { throw new Error('db down') }
+    deps.owners = async () => { throw new Error('db down') }
 
-    // The per-agent catch absorbs it, but the finally is what must hold: a
-    // leaked Queue keeps a Redis client open on every 60s reconciliation.
-    await registerAgentSchedules(deps)
+    // The owner-read failure is absorbed (and leaves existing schedulers
+    // alone), but the finally is what must hold: a leaked Queue keeps a Redis
+    // client open on every 60s reconciliation.
+    assert.deepEqual(await registerAgentSchedules(deps), { registered: 0, failed: 1 })
 
+    assert.deepEqual(recorded.removed, [])
     assert.equal(recorded.closed, true)
   })
 
